@@ -156,14 +156,25 @@ def test_selecting_game_script_does_not_request_variables(tmp_path):
         )
     )
     requested = []
+    thread_requests = []
     window.table_requested.connect(lambda *args: requested.append(args))
+    window.threads_requested.connect(thread_requests.append)
     try:
         window._scripts_loaded([ScriptInfo(7, str(source))])
         window.files.setCurrentItem(window.files.topLevelItem(0))
 
         assert requested == []
+        assert thread_requests == [7]
         assert window.state.current_script_id == 7
         assert window.var_script.value() == 7
+
+        window._threads_loaded(7, [ThreadInfo(3, "main"), ThreadInfo(4, "worker")])
+
+        assert window.threads.topLevelItemCount() == 2
+        assert window.threads.topLevelItem(0).text(0) == "3"
+        assert window.threads.topLevelItem(0).text(1) == "main"
+        assert window.threads.topLevelItem(1).text(0) == "4"
+        assert window.threads.topLevelItem(1).text(1) == "worker"
     finally:
         window.close()
         app.processEvents()
@@ -182,7 +193,9 @@ def test_suspended_script_does_not_request_variables():
         )
     )
     requested = []
+    thread_requests = []
     window.table_requested.connect(lambda *args: requested.append(args))
+    window.threads_requested.connect(thread_requests.append)
     message = LuaMessage(
         LuaMessageId.SCRIPT_SUSPENDED,
         {
@@ -201,6 +214,7 @@ def test_suspended_script_does_not_request_variables():
         window._message_received(message)
 
         assert requested == []
+        assert thread_requests == []
         assert window.state.current_script_id == 7
         assert window.var_script.value() == 7
     finally:

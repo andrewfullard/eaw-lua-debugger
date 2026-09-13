@@ -53,6 +53,7 @@ class MainWindow(QMainWindow):
     service_requested = Signal()
     refresh_requested = Signal()
     control_requested = Signal(str)
+    threads_requested = Signal(int)
     variable_requested = Signal(int, str)
     table_requested = Signal(int, int, str, object)
     execute_requested = Signal(int, str)
@@ -87,6 +88,7 @@ class MainWindow(QMainWindow):
         self.service_requested.connect(self.worker.service_once)
         self.refresh_requested.connect(self.worker.refresh_scripts)
         self.control_requested.connect(self.worker.control)
+        self.threads_requested.connect(self.worker.load_script)
         self.variable_requested.connect(self.worker.dump_variable)
         self.table_requested.connect(self.worker.dump_table)
         self.execute_requested.connect(self.worker.execute_text)
@@ -343,6 +345,7 @@ class MainWindow(QMainWindow):
                 self._select_game_script(
                     self.state.current_script_id,
                     open_source=False,
+                    request_threads=False,
                 )
 
     def _variable_loaded(self, value: object) -> None:
@@ -374,13 +377,14 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         script_id = int(selected[0].text(0))
-        self._select_game_script(script_id, open_source=True)
+        self._select_game_script(script_id, open_source=True, request_threads=True)
 
     def _select_game_script(
         self,
         script_id: int,
         *,
         open_source: bool,
+        request_threads: bool,
     ) -> None:
         if script_id not in self.state.scripts:
             return
@@ -389,7 +393,10 @@ class MainWindow(QMainWindow):
         self.bp_script.setValue(script_id)
         if open_source:
             self._open_source(self.state.scripts[script_id])
+        self._render_threads(script_id)
         self._render_variables()
+        if request_threads and script_id >= 0:
+            self.threads_requested.emit(script_id)
 
     def _thread_selected(self) -> None:
         selected = self.threads.selectedItems()
