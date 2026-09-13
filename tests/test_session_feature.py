@@ -32,4 +32,22 @@ def test_run_diagnostic_session_keeps_connection_serviced():
     assert result["scripts"] == ["script"]
     assert result["child_script_names"] == ["child"]
     assert result["threads"] == ["thread"]
+    assert result["message_count"] == 1
     assert result["messages"][0].message_id == LuaMessageId.HEARTBEAT
+
+
+def test_run_diagnostic_session_can_stream_without_collecting_messages():
+    client = FakeClient()
+    seen = []
+
+    result = run_diagnostic_session(
+        client,
+        script_id=None,
+        duration=2.5,
+        on_message=seen.append,
+        collect_messages=False,
+    )
+
+    assert seen[0].message_id == LuaMessageId.HEARTBEAT
+    assert result["message_count"] == 1
+    assert result["messages"] == []

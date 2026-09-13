@@ -45,6 +45,14 @@ class VariableValue:
     value_text: str
 
 
+@dataclass(frozen=True)
+class TableMember:
+    key_type: int
+    key_text: str
+    value_type: int
+    value_text: str
+
+
 class LuaDebuggerClient:
     """A small blocking client for the game's UDP Lua debug server."""
 
@@ -67,6 +75,7 @@ class LuaDebuggerClient:
         self.reliable = ReliableState(resend_interval=resend_interval)
         self.messages: deque[LuaMessage] = deque()
         self._lua_connected = False
+        self._lua_goodbye_needed = False
 
     def __enter__(self) -> LuaDebuggerClient:
         self.open()
@@ -86,13 +95,14 @@ class LuaDebuggerClient:
 
     def close(self) -> None:
         if self.socket is not None:
-            if self._lua_connected:
+            if self._lua_connected or self._lua_goodbye_needed:
                 self.send_lua(LuaMessageId.GOODBYE)
                 try:
                     self.flush()
                 except Timeout:
                     log.warning("timed out waiting for GOODBYE ACK")
                 self._lua_connected = False
+                self._lua_goodbye_needed = False
             self.socket.close()
             self.socket = None
 
@@ -133,6 +143,8 @@ class LuaDebuggerClient:
 
     def send_lua(self, message_id: int | LuaMessageId, *fields: int | str | list[int]) -> None:
         log.info("sending Lua message id=%s", int(message_id))
+        if message_id == LuaMessageId.HELLO:
+            self._lua_goodbye_needed = True
         self.send_payload(encode_lua_message(message_id, *fields))
 
     def send_payload(self, payload: BitBuffer) -> None:
@@ -256,6 +268,15 @@ class LuaDebuggerClient:
             raise ValueError(f"unknown control command {command!r}") from exc
         self.send_lua(message_id)
 
+    def select_script(self, script_id: int) -> None:
+        self.send_lua(LuaMessageId.SELECT_SCRIPT, script_id)
+
+    def select_thread(self, thread_id: int) -> None:
+        self.send_lua(LuaMessageId.SELECT_THREAD, thread_id)
+
+    def set_callstack_depth(self, script_id: int, callstack_level: int) -> None:
+        self.send_lua(LuaMessageId.SET_CALLSTACK_DEPTH, script_id, callstack_level)
+
     def add_breakpoint(
         self,
         script_id: int,
@@ -310,6 +331,38 @@ class LuaDebuggerClient:
             predicate=lambda message: message.fields["script_id"] == script_id,
         )
         return message.fields["result_text"]
+
+    def dump_table(
+        self,
+        script_id: int,
+        context_or_request_id: int,
+        table_name: str,
+        path: list[int] | None = None,
+    ) -> list[TableMember]:
+        path = path or []
+        self.send_lua(
+            LuaMessageId.DUMP_TABLE,
+            script_id,
+            context_or_request_id,
+            table_name,
+            len(path),
+            path,
+        )
+        message = self.wait_for(
+            LuaMessageId.TABLE_DUMP,
+            predicate=lambda message: (
+                message.fields["response_or_request_id"] == context_or_request_id
+            ),
+        )
+        return [
+            TableMember(
+                key_type=item["key_type"],
+                key_text=item["key_text"],
+                value_type=item["value_type"],
+                value_text=item["value_text"],
+            )
+            for item in message.fields["members"]
+        ]
 
     def iter_messages(self, *, timeout: float | None = None) -> Iterable[LuaMessage]:
         deadline = None if timeout is None else time.monotonic() + timeout

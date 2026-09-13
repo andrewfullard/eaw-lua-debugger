@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 
-from .client import CONTROL_MESSAGES, LuaDebuggerClient
+from . import commands
+from .client import CONTROL_MESSAGES
 from .exceptions import EawLuaDebuggerError
-from .pgnet import build_connect_request, parse_connect_response
-from .session import run_diagnostic_session
 
 
 def _add_connection_args(parser: argparse.ArgumentParser) -> None:
@@ -34,20 +32,30 @@ def main(argv: list[str] | None = None) -> int:
     scripts = subparsers.add_parser("scripts", help="connect and print the active script list")
     _add_connection_args(scripts)
     scripts.add_argument("--json", action="store_true", help="emit JSON")
+    scripts.set_defaults(handler=commands.scripts)
 
     threads = subparsers.add_parser("threads", help="connect and print threads for a script")
     _add_connection_args(threads)
     threads.add_argument("script_id", type=int)
     threads.add_argument("--json", action="store_true", help="emit JSON")
+    threads.set_defaults(handler=commands.threads)
 
     attach = subparsers.add_parser("attach", help="attach to a script and print child scripts")
     _add_connection_args(attach)
     attach.add_argument("script_id", type=int)
     attach.add_argument("--json", action="store_true", help="emit JSON")
+    attach.set_defaults(handler=commands.attach)
 
     control = subparsers.add_parser("control", help="send an execution-control command")
     _add_connection_args(control)
     control.add_argument("control_command", choices=sorted(CONTROL_MESSAGES))
+    control.set_defaults(handler=commands.control)
+
+    context = subparsers.add_parser("context", help="select script/thread or callstack level")
+    _add_connection_args(context)
+    context.add_argument("action", choices=["script", "thread", "callstack"])
+    context.add_argument("values", type=int, nargs="+")
+    context.set_defaults(handler=commands.context)
 
     breakpoint = subparsers.add_parser("breakpoint", help="add or remove a breakpoint")
     _add_connection_args(breakpoint)
@@ -57,213 +65,50 @@ def main(argv: list[str] | None = None) -> int:
     breakpoint.add_argument("source_name")
     breakpoint.add_argument("line_number", type=int)
     breakpoint.add_argument("--condition", default="")
+    breakpoint.set_defaults(handler=commands.breakpoint)
 
     variable = subparsers.add_parser("variable", help="dump a variable in a script context")
     _add_connection_args(variable)
     variable.add_argument("script_id", type=int)
     variable.add_argument("variable_name")
     variable.add_argument("--json", action="store_true", help="emit JSON")
+    variable.set_defaults(handler=commands.variable)
 
     execute = subparsers.add_parser("execute", help="execute text in a script context")
     _add_connection_args(execute)
     execute.add_argument("script_id", type=int)
     execute.add_argument("text")
+    execute.set_defaults(handler=commands.execute)
+
+    table = subparsers.add_parser("table", help="dump a table in a script context")
+    _add_connection_args(table)
+    table.add_argument("script_id", type=int)
+    table.add_argument("context_id", type=int, help="opaque table context/request id")
+    table.add_argument("table_name")
+    table.add_argument("--path", type=int, nargs="*", default=[])
+    table.add_argument("--json", action="store_true", help="emit JSON")
+    table.set_defaults(handler=commands.table)
 
     session = subparsers.add_parser("session", help="connect and service a diagnostic session")
     _add_connection_args(session)
     session.add_argument("--script-id", type=int, default=None)
     session.add_argument("--duration", type=float, default=30.0)
+    session.add_argument("--show-messages", action="store_true", help="print serviced messages")
+    session.set_defaults(handler=commands.session)
 
     hello = subparsers.add_parser("hello-bytes", help="print the core connect request as hex")
     hello.add_argument("client_name", help="client name to encode")
+    hello.set_defaults(handler=commands.hello_bytes)
 
     parse = subparsers.add_parser("parse-spoot", help="parse a Spoot response hex datagram")
     parse.add_argument("hex_datagram", help="raw UDP response as hexadecimal")
+    parse.set_defaults(handler=commands.parse_spoot)
 
     args = parser.parse_args(argv)
     _configure_logging(getattr(args, "verbose", 0))
 
     try:
-        if args.command == "hello-bytes":
-            print(build_connect_request(args.client_name).hex())
-            return 0
-
-        if args.command == "parse-spoot":
-            print(parse_connect_response(bytes.fromhex(args.hex_datagram)))
-            return 0
-
-        if args.command == "scripts":
-            with LuaDebuggerClient(
-                args.host,
-                args.port,
-                local_port=args.local_port,
-                client_name=args.client_name,
-                timeout=args.timeout,
-            ) as client:
-                server_name = client.connect()
-                script_list = client.request_scripts()
-            if args.json:
-                print(
-                    json.dumps(
-                        {
-                            "server_name": server_name,
-                            "scripts": [script.__dict__ for script in script_list],
-                        },
-                        indent=2,
-                    )
-                )
-            else:
-                print(f"Connected to {server_name}")
-                for script in script_list:
-                    print(f"{script.script_id}\t{script.full_path_name}")
-            return 0
-
-        if args.command == "threads":
-            with LuaDebuggerClient(
-                args.host,
-                args.port,
-                local_port=args.local_port,
-                client_name=args.client_name,
-                timeout=args.timeout,
-            ) as client:
-                server_name = client.connect()
-                thread_list = client.request_threads(args.script_id)
-            if args.json:
-                print(
-                    json.dumps(
-                        {
-                            "server_name": server_name,
-                            "script_id": args.script_id,
-                            "threads": [thread.__dict__ for thread in thread_list],
-                        },
-                        indent=2,
-                    )
-                )
-            else:
-                print(f"Connected to {server_name}")
-                for thread in thread_list:
-                    print(f"{thread.thread_index}\t{thread.thread_name}")
-            return 0
-
-        if args.command == "attach":
-            with LuaDebuggerClient(
-                args.host,
-                args.port,
-                local_port=args.local_port,
-                client_name=args.client_name,
-                timeout=args.timeout,
-            ) as client:
-                server_name = client.connect()
-                child_names = client.attach_script(args.script_id)
-            if args.json:
-                print(
-                    json.dumps(
-                        {
-                            "server_name": server_name,
-                            "script_id": args.script_id,
-                            "child_script_names": child_names,
-                        },
-                        indent=2,
-                    )
-                )
-            else:
-                print(f"Connected to {server_name}")
-                for child_name in child_names:
-                    print(child_name)
-            return 0
-
-        if args.command == "control":
-            with LuaDebuggerClient(
-                args.host,
-                args.port,
-                local_port=args.local_port,
-                client_name=args.client_name,
-                timeout=args.timeout,
-            ) as client:
-                server_name = client.connect()
-                client.send_control(args.control_command)
-                client.flush()
-            print(f"Sent {args.control_command} to {server_name}")
-            return 0
-
-        if args.command == "breakpoint":
-            with LuaDebuggerClient(
-                args.host,
-                args.port,
-                local_port=args.local_port,
-                client_name=args.client_name,
-                timeout=args.timeout,
-            ) as client:
-                server_name = client.connect()
-                if args.action == "add":
-                    client.add_breakpoint(
-                        args.script_id,
-                        args.thread_id,
-                        args.source_name,
-                        args.line_number,
-                        args.condition,
-                    )
-                else:
-                    client.remove_breakpoint(
-                        args.script_id,
-                        args.thread_id,
-                        args.source_name,
-                        args.line_number,
-                    )
-                client.flush()
-            print(f"{args.action} breakpoint sent to {server_name}")
-            return 0
-
-        if args.command == "variable":
-            with LuaDebuggerClient(
-                args.host,
-                args.port,
-                local_port=args.local_port,
-                client_name=args.client_name,
-                timeout=args.timeout,
-            ) as client:
-                server_name = client.connect()
-                value = client.dump_variable(args.script_id, args.variable_name)
-            if args.json:
-                print(json.dumps({"server_name": server_name, **value.__dict__}, indent=2))
-            else:
-                print(f"{value.variable_name}\t{value.value_type}\t{value.value_text}")
-            return 0
-
-        if args.command == "execute":
-            with LuaDebuggerClient(
-                args.host,
-                args.port,
-                local_port=args.local_port,
-                client_name=args.client_name,
-                timeout=args.timeout,
-            ) as client:
-                server_name = client.connect()
-                result_text = client.execute_text(args.script_id, args.text)
-            print(f"Connected to {server_name}")
-            print(result_text)
-            return 0
-
-        if args.command == "session":
-            with LuaDebuggerClient(
-                args.host,
-                args.port,
-                local_port=args.local_port,
-                client_name=args.client_name,
-                timeout=args.timeout,
-            ) as client:
-                server_name = client.connect()
-                result = run_diagnostic_session(
-                    client,
-                    script_id=args.script_id,
-                    duration=args.duration,
-                )
-            print(f"Connected to {server_name}")
-            print(f"scripts: {len(result['scripts'])}")
-            print(f"child scripts: {len(result['child_script_names'])}")
-            print(f"threads: {len(result['threads'])}")
-            print(f"messages: {len(result['messages'])}")
-            return 0
+        return args.handler(args)
 
     except EawLuaDebuggerError as exc:
         print(f"error: {exc}", file=sys.stderr)
