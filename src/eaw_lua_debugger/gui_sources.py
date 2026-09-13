@@ -38,6 +38,16 @@ def load_script_source(script: ScriptInfo, roots: list[str | Path] | None) -> So
     )
 
 
+def find_lua_files(roots: list[str | Path]) -> list[Path]:
+    files = []
+    for root in _dedupe([Path(root) for root in roots]):
+        if root.is_file() and root.suffix.lower() == ".lua":
+            files.append(root)
+        elif root.is_dir():
+            files.extend(path for path in root.rglob("*.lua") if path.is_file())
+    return sorted(_dedupe(files), key=lambda path: str(path).lower())
+
+
 def format_source_lines(text: str, breakpoint_lines: set[int] | None = None) -> str:
     breakpoint_lines = breakpoint_lines or set()
     lines = text.splitlines()

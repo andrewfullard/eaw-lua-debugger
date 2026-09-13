@@ -1,5 +1,5 @@
 from eaw_lua_debugger.client import ScriptInfo
-from eaw_lua_debugger.gui_sources import format_source_lines, load_script_source
+from eaw_lua_debugger.gui_sources import find_lua_files, format_source_lines, load_script_source
 
 
 def test_load_script_source_uses_data_scripts_suffix(tmp_path):
@@ -19,3 +19,13 @@ def test_load_script_source_uses_data_scripts_suffix(tmp_path):
 
 def test_format_source_lines_includes_line_numbers_and_breakpoint_markers():
     assert format_source_lines("a\nb\n", {2}) == "  1   a\n  2 \u25cf b"
+
+
+def test_find_lua_files_lists_lua_files_under_roots(tmp_path):
+    script = tmp_path / "Data" / "Scripts" / "A.lua"
+    ignored = tmp_path / "Data" / "Scripts" / "A.txt"
+    script.parent.mkdir(parents=True)
+    script.write_text("-- lua\n", encoding="utf-8")
+    ignored.write_text("text\n", encoding="utf-8")
+
+    assert find_lua_files([tmp_path]) == [script]

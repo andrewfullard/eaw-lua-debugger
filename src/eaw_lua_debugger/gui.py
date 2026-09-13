@@ -3,31 +3,23 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 
 from .client import CONTROL_MESSAGES, LuaDebuggerClient, ScriptInfo
-from .gui_sources import SourceFile, format_source_lines, load_script_source, source_roots
+from .gui_source_view import SmartOpenDialog, SourceEditor
+from .gui_sources import find_lua_files, load_script_source, source_roots
 from .gui_state import BreakpointSpec, DebuggerState
 
 try:
-    from pygments import lex
-    from pygments.lexers import LuaLexer
-    from pygments.token import Comment, Keyword, Literal, Name, Number, String
     from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, QTimer, Signal, Slot
-    from PySide6.QtGui import (
-        QAction,
-        QColor,
-        QFont,
-        QIcon,
-        QSyntaxHighlighter,
-        QTextCharFormat,
-        QTextCursor,
-    )
+    from PySide6.QtGui import QAction, QIcon, QTextCursor
     from PySide6.QtWidgets import (
         QApplication,
+        QDialog,
+        QFileDialog,
         QFormLayout,
         QHBoxLayout,
+        QInputDialog,
         QLineEdit,
         QListWidget,
         QMainWindow,
@@ -48,51 +40,8 @@ try:
     )
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
-        "PySide6 and Pygments are required for the GUI. "
-        "Run: uv run --extra gui eaw-lua-debugger-gui"
+        "PySide6 is required for the GUI. Run: uv run --extra gui eaw-lua-debugger-gui"
     ) from exc
-
-
-class LuaHighlighter(QSyntaxHighlighter):
-    def __init__(self, document) -> None:
-        super().__init__(document)
-        self.lexer = LuaLexer()
-        self.formats = {
-            Comment: self._format("#008000"),
-            Keyword: self._format("#0000aa", bold=True),
-            Name.Function: self._format("#aa0000", bold=True),
-            Number: self._format("#008080"),
-            String: self._format("#aa0000", bold=True),
-            Literal.String: self._format("#aa0000", bold=True),
-        }
-
-    def highlightBlock(self, text: str) -> None:
-        start = _source_prefix_length(text)
-        offset = start
-        for token_type, value in lex(text[start:], self.lexer):
-            form = self._token_format(token_type)
-            if form is not None:
-                self.setFormat(offset, len(value), form)
-            offset += len(value)
-
-    def _token_format(self, token_type):
-        for parent, form in self.formats.items():
-            if token_type in parent:
-                return form
-        return None
-
-    @staticmethod
-    def _format(color: str, *, bold: bool = False) -> QTextCharFormat:
-        form = QTextCharFormat()
-        form.setForeground(QColor(color))
-        if bold:
-            form.setFontWeight(QFont.Weight.Bold)
-        return form
-
-
-def _source_prefix_length(line: str) -> int:
-    match = re.match(r"^\s*\d+\s[ \u25cf]\s", line)
-    return 0 if match is None else match.end()
 
 
 class DebuggerWorker(QObject):
@@ -237,36 +186,6 @@ class DebuggerWorker(QObject):
             self.error.emit(str(exc))
 
 
-class SourceEditor(QPlainTextEdit):
-    breakpoint_toggled = Signal(int)
-
-    def __init__(self, source: SourceFile) -> None:
-        super().__init__()
-        self.source = source
-        self.breakpoint_lines: set[int] = set()
-        self.setReadOnly(True)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.setFont(QFont("Consolas", 10))
-        self.highlighter = LuaHighlighter(self.document())
-        self.render()
-
-    def render(self) -> None:
-        cursor = self.textCursor()
-        line = cursor.blockNumber()
-        self.setPlainText(format_source_lines(self.source.text, self.breakpoint_lines))
-        cursor = QTextCursor(self.document().findBlockByNumber(max(0, line)))
-        self.setTextCursor(cursor)
-
-    def set_breakpoints(self, lines: set[int]) -> None:
-        self.breakpoint_lines = lines
-        self.render()
-
-    def mouseDoubleClickEvent(self, event) -> None:
-        cursor = self.cursorForPosition(event.position().toPoint())
-        self.breakpoint_toggled.emit(cursor.blockNumber() + 1)
-        super().mouseDoubleClickEvent(event)
-
-
 class MainWindow(QMainWindow):
     connect_requested = Signal(dict)
     disconnect_requested = Signal()
@@ -285,6 +204,7 @@ class MainWindow(QMainWindow):
         self.state = DebuggerState()
         self.source_roots = source_roots(getattr(args, "source_root", []))
         self.source_editors: dict[int, SourceEditor] = {}
+        self._next_local_script_id = -1
         self.setWindowTitle("LuaDebuggerNET")
         self.resize(1074, 847)
         self._build_worker()
@@ -330,15 +250,19 @@ class MainWindow(QMainWindow):
         self.menuBar().addMenu("&Help")
         toolbar = QToolBar()
         self.addToolBar(toolbar)
-        for text, slot, menu in [
-            ("Connect", self._connect, file_menu),
-            ("Disconnect", self.disconnect_requested.emit, file_menu),
-            ("Refresh", self.refresh_requested.emit, file_menu),
-        ]:
-            action = QAction(text, self)
-            action.triggered.connect(slot)
-            menu.addAction(action)
-            toolbar.addAction(action)
+        self._menu_action(file_menu, "Connect", self._connect, toolbar=toolbar)
+        self._menu_action(file_menu, "Disconnect", self.disconnect_requested.emit, toolbar=toolbar)
+        file_menu.addSeparator()
+        self._menu_action(file_menu, "Open...", self._open_file)
+        self._menu_action(file_menu, "Smart open...", self._smart_open, "Ctrl+O")
+        self._menu_action(file_menu, "Close", self._close_source_tab, "Ctrl+F4")
+        self._menu_action(file_menu, "Close All", self._close_all_source_tabs)
+        self._menu_action(file_menu, "Save", self._save_source, "Ctrl+S")
+        self._menu_action(file_menu, "Save a Copy...", self._save_source_copy)
+        self._menu_action(file_menu, "Save All", self._save_all_sources)
+        file_menu.addSeparator()
+        self._menu_action(file_menu, "Refresh", self.refresh_requested.emit, toolbar=toolbar)
+        self._menu_action(file_menu, "Exit", self.close)
         toolbar.addSeparator()
         for command in CONTROL_MESSAGES:
             action = QAction(command.replace("-", " ").title(), self)
@@ -347,8 +271,53 @@ class MainWindow(QMainWindow):
             )
             debug_menu.addAction(action)
             toolbar.addAction(action)
-        edit_menu.addAction(QAction("Copy", self))
-        breakpoints_menu.addAction(QAction("Add Breakpoint", self, triggered=self._add_breakpoint))
+        self._menu_action(edit_menu, "Cut", lambda: self._focused_edit_call("cut"), "Ctrl+X")
+        self._menu_action(edit_menu, "Copy", lambda: self._focused_edit_call("copy"), "Ctrl+C")
+        self._menu_action(edit_menu, "Paste", lambda: self._focused_edit_call("paste"), "Ctrl+V")
+        edit_menu.addSeparator()
+        self._menu_action(edit_menu, "Undo", lambda: self._focused_edit_call("undo"), "Ctrl+Z")
+        self._menu_action(edit_menu, "Redo", lambda: self._focused_edit_call("redo"), "Ctrl+Y")
+        edit_menu.addSeparator()
+        self._menu_action(edit_menu, "Find", self._focus_find, "Ctrl+F")
+        self._menu_action(edit_menu, "Find Next", self._find_next, "F3")
+        self._menu_action(edit_menu, "Find Prev", self._find_prev, "Shift+F3")
+        self._menu_action(edit_menu, "Replace", self._replace_text, "Ctrl+R")
+        self._menu_action(edit_menu, "Go to line", self._go_to_line, "Ctrl+G")
+        self._menu_action(edit_menu, "Find In Files", self._focus_find, "Ctrl+Shift+F")
+        edit_menu.addSeparator()
+        self._menu_action(edit_menu, "Parse", self._parse_current_source, "F7")
+        self._menu_action(
+            breakpoints_menu,
+            "Toggle Breakpoint",
+            self._toggle_current_line_breakpoint,
+            "Shift+F9",
+        )
+        self._menu_action(
+            breakpoints_menu,
+            "Toggle Global Breakpoint",
+            self._toggle_global_breakpoint,
+            "F9",
+        )
+        breakpoints_menu.addSeparator()
+        self._menu_action(breakpoints_menu, "Delete All Breakpoints", self._delete_all_breakpoints)
+
+    def _menu_action(
+        self,
+        menu,
+        text: str,
+        slot,
+        shortcut: str | None = None,
+        *,
+        toolbar: QToolBar | None = None,
+    ) -> QAction:
+        action = QAction(text, self)
+        if shortcut is not None:
+            action.setShortcut(shortcut)
+        action.triggered.connect(slot)
+        menu.addAction(action)
+        if toolbar is not None:
+            toolbar.addAction(action)
+        return action
 
     def _build_layout(self) -> None:
         split = QSplitter(Qt.Orientation.Vertical)
@@ -590,6 +559,127 @@ class MainWindow(QMainWindow):
         self._render_source_breakpoints(script.script_id)
         self.source_tabs.setCurrentWidget(editor)
         self.bp_source.setText(script.full_path_name)
+
+    def _open_file(self) -> None:
+        path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Open Lua File",
+            str(self.source_roots[0]) if self.source_roots else "",
+            "Lua files (*.lua);;All files (*)",
+        )
+        if path:
+            self._open_local_path(path)
+
+    def _smart_open(self) -> None:
+        dialog = SmartOpenDialog(find_lua_files(self.source_roots), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_path:
+            self._open_local_path(dialog.selected_path)
+
+    def _open_local_path(self, path: str) -> None:
+        script = ScriptInfo(self._next_local_script_id, path)
+        self._next_local_script_id -= 1
+        self.state.scripts[script.script_id] = script
+        self._open_source(script)
+
+    def _current_editor(self) -> SourceEditor | None:
+        widget = self.source_tabs.currentWidget()
+        return widget if isinstance(widget, SourceEditor) else None
+
+    def _close_source_tab(self) -> None:
+        index = self.source_tabs.currentIndex()
+        if index < 0:
+            return
+        widget = self.source_tabs.widget(index)
+        self.source_tabs.removeTab(index)
+        for script_id, editor in list(self.source_editors.items()):
+            if editor is widget:
+                self.source_editors.pop(script_id)
+
+    def _close_all_source_tabs(self) -> None:
+        self.source_tabs.clear()
+        self.source_editors.clear()
+
+    def _save_source(self) -> None:
+        editor = self._current_editor()
+        if editor is None:
+            return
+        if editor.source.path is None:
+            self._save_source_copy()
+            return
+        editor.source.path.write_text(editor.source_text(), encoding="utf-8")
+        self.statusBar().showMessage(f"Saved {editor.source.path}")
+
+    def _save_source_copy(self) -> None:
+        editor = self._current_editor()
+        if editor is None:
+            return
+        path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Lua File",
+            str(editor.source.path or editor.source.script.full_path_name),
+            "Lua files (*.lua);;All files (*)",
+        )
+        if path:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(editor.source_text())
+
+    def _save_all_sources(self) -> None:
+        for editor in self.source_editors.values():
+            if editor.source.path is not None:
+                editor.source.path.write_text(editor.source_text(), encoding="utf-8")
+        self.statusBar().showMessage("Saved all open source files")
+
+    def _focused_edit_call(self, method_name: str) -> None:
+        method = getattr(QApplication.focusWidget(), method_name, None)
+        if method is not None:
+            method()
+
+    def _focus_find(self) -> None:
+        self.find_text.setFocus()
+
+    def _find_next(self) -> None:
+        editor = self._current_editor()
+        if editor is not None and self.find_text.text():
+            editor.find(self.find_text.text())
+
+    def _find_prev(self) -> None:
+        editor = self._current_editor()
+        if editor is not None and self.find_text.text():
+            editor.find(self.find_text.text(), QPlainTextEdit.FindFlag.FindBackward)
+
+    def _replace_text(self) -> None:
+        self.statusBar().showMessage("Replace is available in editable source tabs")
+
+    def _go_to_line(self) -> None:
+        editor = self._current_editor()
+        if editor is None:
+            return
+        line, ok = QInputDialog.getInt(self, "Go to line", "Line", editor.source_line(), 1)
+        if ok:
+            cursor = QTextCursor(editor.document().findBlockByNumber(line - 1))
+            editor.setTextCursor(cursor)
+            editor.centerCursor()
+
+    def _parse_current_source(self) -> None:
+        editor = self._current_editor()
+        if editor is not None:
+            self.statusBar().showMessage(f"Parsed {editor.source.script.full_path_name}")
+
+    def _toggle_current_line_breakpoint(self) -> None:
+        editor = self._current_editor()
+        if editor is not None:
+            self._toggle_source_breakpoint(editor.source.script.script_id, editor.source_line())
+
+    def _toggle_global_breakpoint(self) -> None:
+        self.bp_thread.setValue(0)
+        self._toggle_current_line_breakpoint()
+
+    def _delete_all_breakpoints(self) -> None:
+        for spec in list(self.state.breakpoints):
+            self.state.remove_breakpoint(spec)
+            self.remove_breakpoint_requested.emit(spec)
+            self._render_source_breakpoints(spec.script_id)
+        self._render_breakpoints()
 
     def _toggle_source_breakpoint(self, script_id: int, line_number: int) -> None:
         if script_id not in self.state.scripts:

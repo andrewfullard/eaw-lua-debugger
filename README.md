@@ -52,6 +52,8 @@ state through tabs matching the native tool shape:
 - Files, Call Stack, and Threads
 - line-numbered Lua source tabs with Pygments syntax highlighting
 - double-click source lines to add/remove breakpoints
+- `File > Smart open...` to list Lua files found under source roots
+- File/Edit/Breakpoints menus with the native debugger-style shortcuts
 - Debug Output, Variables, Lua Console, Breakpoints, Parse Errors, and Find In Files
 
 Connection options are available as command-line arguments:
@@ -64,6 +66,10 @@ uv run --extra gui eaw-lua-debugger-gui --host 127.0.0.1 --port 1234 --local-por
 game-reported paths directly and by common suffixes such as `Data/Scripts/...`.
 You can also set `EAW_LUA_SOURCE_ROOT` to one or more roots separated by the
 platform path separator.
+
+`Breakpoints > Delete All Breakpoints` removes the breakpoints currently known
+to the GUI by sending individual remove-breakpoint requests. It is intentionally
+not mapped to any undocumented debug-control value.
 
 When the GUI or CLI exits normally, it sends Lua debugger `GOODBYE` and flushes
 the reliable ACK so the same local endpoint can be reused.
