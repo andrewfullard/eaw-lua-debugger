@@ -38,6 +38,13 @@ class ThreadInfo:
     thread_name: str
 
 
+@dataclass(frozen=True)
+class VariableValue:
+    variable_name: str
+    value_type: int
+    value_text: str
+
+
 class LuaDebuggerClient:
     """A small blocking client for the game's UDP Lua debug server."""
 
@@ -260,6 +267,15 @@ class LuaDebuggerClient:
             thread_id,
             source_name,
             line_number,
+        )
+
+    def dump_variable(self, script_id: int, variable_name: str) -> VariableValue:
+        self.send_lua(LuaMessageId.DUMP_VARIABLE, script_id, variable_name)
+        message = self.wait_for(LuaMessageId.VARIABLE_DUMP)
+        return VariableValue(
+            variable_name=message.fields["variable_name"],
+            value_type=message.fields["value_type"],
+            value_text=message.fields["value_text"],
         )
 
     def iter_messages(self, *, timeout: float | None = None) -> Iterable[LuaMessage]:

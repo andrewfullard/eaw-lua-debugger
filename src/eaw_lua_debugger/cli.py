@@ -58,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
     breakpoint.add_argument("line_number", type=int)
     breakpoint.add_argument("--condition", default="")
 
+    variable = subparsers.add_parser("variable", help="dump a variable in a script context")
+    _add_connection_args(variable)
+    variable.add_argument("script_id", type=int)
+    variable.add_argument("variable_name")
+    variable.add_argument("--json", action="store_true", help="emit JSON")
+
     session = subparsers.add_parser("session", help="connect and service a diagnostic session")
     _add_connection_args(session)
     session.add_argument("--script-id", type=int, default=None)
@@ -199,6 +205,22 @@ def main(argv: list[str] | None = None) -> int:
                         args.line_number,
                     )
             print(f"{args.action} breakpoint sent to {server_name}")
+            return 0
+
+        if args.command == "variable":
+            with LuaDebuggerClient(
+                args.host,
+                args.port,
+                local_port=args.local_port,
+                client_name=args.client_name,
+                timeout=args.timeout,
+            ) as client:
+                server_name = client.connect()
+                value = client.dump_variable(args.script_id, args.variable_name)
+            if args.json:
+                print(json.dumps({"server_name": server_name, **value.__dict__}, indent=2))
+            else:
+                print(f"{value.variable_name}\t{value.value_type}\t{value.value_text}")
             return 0
 
         if args.command == "session":
