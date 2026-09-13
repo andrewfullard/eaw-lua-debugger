@@ -1,0 +1,148 @@
+"""Synchronous UDP client for the Empire at War Lua debugger."""
+
+from __future__ import annotations
+
+import os
+import socket
+import time
+from collections import deque
+from collections.abc import Iterable
+from dataclasses import dataclass
+
+from .bitstream import BitBuffer
+from .exceptions import Timeout
+from .lua_messages import LuaMessage, LuaMessageId, encode_lua_message, parse_lua_message
+from .pgnet import build_connect_request, decode_datagram, parse_connect_response
+from .reliable import ReliableState
+
+
+@dataclass(frozen=True)
+class ScriptInfo:
+    script_id: int
+    full_path_name: str
+
+
+class LuaDebuggerClient:
+    """A small blocking client for the game's UDP Lua debug server."""
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 1234,
+        *,
+        local_port: int = 0,
+        client_name: str | None = None,
+        timeout: float = 5.0,
+        resend_interval: float = 2.0,
+    ) -> None:
+        self.remote = (host, port)
+        self.local_port = local_port
+        self.client_name = client_name or f"LuaDebuggerNET:{os.getpid()}"
+        self.timeout = timeout
+        self.socket: socket.socket | None = None
+        self.server_name: str | None = None
+        self.reliable = ReliableState(resend_interval=resend_interval)
+        self.messages: deque[LuaMessage] = deque()
+
+    def __enter__(self) -> LuaDebuggerClient:
+        self.open()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def open(self) -> None:
+        if self.socket is not None:
+            return
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("0.0.0.0", self.local_port))
+        sock.settimeout(0.1)
+        self.socket = sock
+
+    def close(self) -> None:
+        if self.socket is not None:
+            self.socket.close()
+            self.socket = None
+
+    def connect(self) -> str:
+        """Perform the PGNet and Lua debugger hello handshakes."""
+
+        self.open()
+        assert self.socket is not None
+        self.socket.sendto(build_connect_request(self.client_name), self.remote)
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            try:
+                datagram, address = self.socket.recvfrom(8192)
+            except TimeoutError:
+                continue
+            if address != self.remote:
+                continue
+            self.server_name = parse_connect_response(datagram)
+            self.send_lua(LuaMessageId.HELLO)
+            self.wait_for(LuaMessageId.HELLO, deadline=deadline)
+            return self.server_name
+        raise Timeout("timed out waiting for PGNet Spoot response")
+
+    def send_lua(self, message_id: int | LuaMessageId, *fields: int | str | list[int]) -> None:
+        self.send_payload(encode_lua_message(message_id, *fields))
+
+    def send_payload(self, payload: BitBuffer) -> None:
+        assert self.socket is not None
+        for datagram in self.reliable.make_guaranteed_packets(payload):
+            self.socket.sendto(datagram, self.remote)
+
+    def service_once(self) -> list[LuaMessage]:
+        """Service one UDP receive attempt, ACKing reliable packets immediately."""
+
+        assert self.socket is not None
+        for datagram in self.reliable.due_resends():
+            self.socket.sendto(datagram, self.remote)
+
+        try:
+            datagram, address = self.socket.recvfrom(65535)
+        except TimeoutError:
+            return []
+        if address != self.remote:
+            return []
+
+        packet = decode_datagram(datagram)
+        result = self.reliable.process_packet(packet)
+        for outbound in result.outbound:
+            self.socket.sendto(outbound, self.remote)
+
+        messages = []
+        for payload in result.deliveries:
+            message = parse_lua_message(payload)
+            self.messages.append(message)
+            messages.append(message)
+        return messages
+
+    def wait_for(
+        self,
+        message_id: int | LuaMessageId,
+        *,
+        deadline: float | None = None,
+    ) -> LuaMessage:
+        target = int(message_id)
+        deadline = time.monotonic() + self.timeout if deadline is None else deadline
+        while time.monotonic() < deadline:
+            for message in list(self.messages):
+                if message.message_id == target:
+                    self.messages.remove(message)
+                    return message
+            self.service_once()
+        raise Timeout(f"timed out waiting for Lua message ID {target}")
+
+    def request_scripts(self) -> list[ScriptInfo]:
+        self.send_lua(LuaMessageId.REQUEST_SCRIPT_LIST)
+        message = self.wait_for(LuaMessageId.SCRIPT_LIST)
+        return [
+            ScriptInfo(script_id=item["script_id"], full_path_name=item["full_path_name"])
+            for item in message.fields["scripts"]
+        ]
+
+    def iter_messages(self, *, timeout: float | None = None) -> Iterable[LuaMessage]:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while deadline is None or time.monotonic() < deadline:
+            yield from self.service_once()

@@ -1,0 +1,32 @@
+[project]
+name = "eaw-lua-debugger"
+version = "0.1.0"
+description = "PGNet Lua debugger client for Star Wars: Empire at War"
+readme = "README.md"
+authors = [
+    { name = "Andrew Fullard", email = "20341051+andrewfullard@users.noreply.github.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "bitarray>=3.11.0",
+]
+
+[project.scripts]
+eaw-lua-debugger = "eaw_lua_debugger.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+    "ruff>=0.16.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
