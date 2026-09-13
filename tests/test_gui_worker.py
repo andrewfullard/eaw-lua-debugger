@@ -7,7 +7,8 @@ import argparse
 from PySide6.QtWidgets import QApplication
 
 from eaw_lua_debugger import gui
-from eaw_lua_debugger.client import ScriptInfo, ThreadInfo
+from eaw_lua_debugger.client import ScriptInfo, TableMember, ThreadInfo
+from eaw_lua_debugger.lua_messages import LuaMessage, LuaMessageId
 
 
 class FakeClient:
@@ -27,6 +28,10 @@ class FakeClient:
     def request_threads(self, script_id):
         self.calls.append(("request_threads", script_id))
         return [ThreadInfo(3, "main")]
+
+    def dump_table(self, script_id, context_id, name, path):
+        self.calls.append(("dump_table", script_id, context_id, name, path))
+        return [TableMember(4, "GlobalName", 2, "GlobalValue")]
 
 
 def test_gui_loading_a_script_does_not_send_context_or_break_commands():
@@ -52,6 +57,19 @@ def test_gui_worker_reports_backend_timeout_without_traceback():
     worker.load_script(7)
 
     assert errors == ["boom"]
+
+
+def test_gui_worker_table_dump_reports_script_context_and_members():
+    worker = gui.DebuggerWorker()
+    client = FakeClient()
+    worker.client = client
+    loaded = []
+    worker.table_loaded.connect(lambda *args: loaded.append(args))
+
+    worker.dump_table(7, 99, "_G", [])
+
+    assert client.calls == [("dump_table", 7, 99, "_G", [])]
+    assert loaded == [(7, 99, "_G", [TableMember(4, "GlobalName", 2, "GlobalValue")])]
 
 
 def test_gui_breakpoints_render_in_table_and_source_gutter_not_output(tmp_path):
@@ -82,6 +100,106 @@ def test_gui_breakpoints_render_in_table_and_source_gutter_not_output(tmp_path):
         assert window.breakpoints.rowCount() == 1
         assert window.output.toPlainText() == ""
         assert editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_selecting_game_script_does_not_request_variables(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "Foo.lua"
+    source.write_text("a\nb\n", encoding="utf-8")
+    window = gui.MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    requested = []
+    window.table_requested.connect(lambda *args: requested.append(args))
+    try:
+        window._scripts_loaded([ScriptInfo(7, str(source))])
+        window.files.setCurrentItem(window.files.topLevelItem(0))
+
+        assert requested == []
+        assert window.state.current_script_id == 7
+        assert window.var_script.value() == 7
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_suspended_script_refreshes_variables_even_when_script_id_is_unchanged():
+    app = QApplication.instance() or QApplication([])
+    window = gui.MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    requested = []
+    window.table_requested.connect(lambda *args: requested.append(args))
+    message = LuaMessage(
+        LuaMessageId.SCRIPT_SUSPENDED,
+        {
+            "script_id": 7,
+            "current_thread_id": 0,
+            "full_path_name": "Data/Scripts/Foo.lua",
+            "callstack": [],
+            "threads": [],
+        },
+        raw_payload=None,
+    )
+    try:
+        window.state.current_script_id = 7
+
+        window._message_received(message)
+        window._message_received(message)
+
+        assert requested == [(7, 1, "_G", []), (7, 2, "_G", [])]
+
+        window._table_loaded(7, 2, "_G", [TableMember(4, "GlobalName", 2, "GlobalValue")])
+
+        assert window.variables.topLevelItemCount() == 1
+        row = window.variables.topLevelItem(0)
+        assert [row.text(0), row.text(1), row.text(2)] == [
+            "GlobalName",
+            "2",
+            "GlobalValue",
+        ]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_local_source_open_does_not_request_game_variables(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "Local.lua"
+    source.write_text("a\nb\n", encoding="utf-8")
+    window = gui.MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    requested = []
+    window.table_requested.connect(lambda *args: requested.append(args))
+    try:
+        window._open_local_path(str(source))
+
+        assert requested == []
     finally:
         window.close()
         app.processEvents()

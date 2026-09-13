@@ -9,6 +9,7 @@ from .client import CONTROL_MESSAGES, LuaDebuggerClient, ScriptInfo
 from .gui_source_view import SmartOpenDialog, SourceEditor
 from .gui_sources import find_lua_files, load_script_source, source_roots
 from .gui_state import BreakpointSpec, DebuggerState
+from .lua_messages import LuaMessageId
 
 try:
     from PySide6.QtCore import QMetaObject, QObject, Qt, QThread, QTimer, Signal, Slot
@@ -53,7 +54,7 @@ class DebuggerWorker(QObject):
     children_loaded = Signal(int, object)
     message_received = Signal(object)
     variable_loaded = Signal(object)
-    table_loaded = Signal(str, object)
+    table_loaded = Signal(int, int, str, object)
     execute_finished = Signal(str)
 
     def __init__(self) -> None:
@@ -141,7 +142,12 @@ class DebuggerWorker(QObject):
         if self.client is None:
             return
         try:
-            self.table_loaded.emit(name, self.client.dump_table(script_id, context_id, name, path))
+            self.table_loaded.emit(
+                script_id,
+                context_id,
+                name,
+                self.client.dump_table(script_id, context_id, name, path),
+            )
         except Exception as exc:  # noqa: BLE001
             self.error.emit(str(exc))
 
@@ -205,6 +211,8 @@ class MainWindow(QMainWindow):
         self.source_roots = source_roots(getattr(args, "source_root", []))
         self.source_editors: dict[int, SourceEditor] = {}
         self._next_local_script_id = -1
+        self._next_table_request_id = 1
+        self._pending_variable_requests: dict[int, int] = {}
         self.setWindowTitle("LuaDebuggerNET")
         self.resize(1074, 847)
         self._build_worker()
@@ -385,22 +393,11 @@ class MainWindow(QMainWindow):
     def _variables_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        form = QFormLayout()
         self.var_script = QSpinBox(maximum=0x7FFFFFFF)
         self.var_name = QLineEdit("_G")
         self.table_context = QSpinBox(maximum=0x7FFFFFFF)
         self.table_name = QLineEdit("_G")
         self.table_path = QLineEdit()
-        form.addRow("Script", self.var_script)
-        form.addRow("Variable", self.var_name)
-        form.addRow("Table Context", self.table_context)
-        form.addRow("Table", self.table_name)
-        form.addRow("Path", self.table_path)
-        buttons = QHBoxLayout()
-        buttons.addWidget(QPushButton("Dump Variable", clicked=self._dump_variable))
-        buttons.addWidget(QPushButton("Dump Table", clicked=self._dump_table))
-        layout.addLayout(form)
-        layout.addLayout(buttons)
         layout.addWidget(self.variables)
         return widget
 
@@ -459,6 +456,10 @@ class MainWindow(QMainWindow):
         self.state.set_child_scripts(script_id, list(children))
 
     def _message_received(self, message: object) -> None:
+        previous_script_id = self.state.current_script_id
+        script_was_suspended = (
+            getattr(message, "message_id", None) == LuaMessageId.SCRIPT_SUSPENDED
+        )
         self.state.apply_message(message)
         if self.state.output:
             self.output.appendPlainText(self.state.output[-1])
@@ -469,13 +470,31 @@ class MainWindow(QMainWindow):
         self.callstack.addItems(self.state.callstack)
         if self.state.current_script_id is not None:
             self._render_threads(self.state.current_script_id)
+            if script_was_suspended or self.state.current_script_id != previous_script_id:
+                self._select_game_script(
+                    self.state.current_script_id,
+                    open_source=False,
+                    request_variables=script_was_suspended,
+                )
 
     def _variable_loaded(self, value: object) -> None:
         self.state.set_variable(value)
         self._render_variables()
 
-    def _table_loaded(self, name: str, members: object) -> None:
-        self.state.set_table_members(name, list(members))
+    def _table_loaded(
+        self,
+        script_id: int,
+        context_id: int,
+        name: str,
+        members: object,
+    ) -> None:
+        members = list(members)
+        pending_script_id = self._pending_variable_requests.pop(context_id, None)
+        if pending_script_id == script_id and name == "_G":
+            self.state.set_script_variables(script_id, members)
+            self.statusBar().showMessage(f"Loaded variables for script {script_id}")
+        else:
+            self.state.set_table_members(name, members)
         self._render_variables()
 
     def _execute_finished(self, result: str) -> None:
@@ -487,10 +506,35 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         script_id = int(selected[0].text(0))
+        self._select_game_script(script_id, open_source=True, request_variables=False)
+
+    def _select_game_script(
+        self,
+        script_id: int,
+        *,
+        open_source: bool,
+        request_variables: bool,
+    ) -> None:
+        if script_id not in self.state.scripts:
+            return
         self.state.current_script_id = script_id
         self.var_script.setValue(script_id)
         self.bp_script.setValue(script_id)
-        self._open_source(self.state.scripts[script_id])
+        if open_source:
+            self._open_source(self.state.scripts[script_id])
+        self._render_variables()
+        if request_variables:
+            self._request_script_variables(script_id)
+
+    def _request_script_variables(self, script_id: int) -> None:
+        if script_id < 0:
+            return
+        request_id = self._next_table_request_id
+        self._next_table_request_id += 1
+        self._pending_variable_requests[request_id] = script_id
+        self.variables.clear()
+        self.statusBar().showMessage(f"Loading variables for script {script_id}...")
+        self.table_requested.emit(script_id, request_id, "_G", [])
 
     def _thread_selected(self) -> None:
         selected = self.threads.selectedItems()
@@ -720,6 +764,15 @@ class MainWindow(QMainWindow):
 
     def _render_variables(self) -> None:
         self.variables.clear()
+        script_id = self.state.current_script_id
+        if script_id is not None:
+            for member in self.state.script_variables.get(script_id, []):
+                self.variables.addTopLevelItem(
+                    QTreeWidgetItem(
+                        [member.key_text, str(member.value_type), member.value_text]
+                    )
+                )
+            return
         for value in self.state.variables.values():
             self.variables.addTopLevelItem(
                 QTreeWidgetItem([value.variable_name, str(value.value_type), value.value_text])

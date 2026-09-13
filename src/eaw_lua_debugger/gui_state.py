@@ -37,6 +37,7 @@ class DebuggerState:
     parse_errors: list[str] = field(default_factory=list)
     variables: dict[str, VariableValue] = field(default_factory=dict)
     tables: dict[str, list[TableMember]] = field(default_factory=dict)
+    script_variables: dict[int, list[TableMember]] = field(default_factory=dict)
     breakpoints: list[BreakpointSpec] = field(default_factory=list)
     console_results: list[str] = field(default_factory=list)
     current_script_id: int | None = None
@@ -56,6 +57,9 @@ class DebuggerState:
 
     def set_table_members(self, table_name: str, members: list[TableMember]) -> None:
         self.tables[table_name] = members
+
+    def set_script_variables(self, script_id: int, members: list[TableMember]) -> None:
+        self.script_variables[script_id] = members
 
     def add_breakpoint(self, breakpoint: BreakpointSpec) -> None:
         self.remove_breakpoint(breakpoint)
@@ -82,6 +86,8 @@ class DebuggerState:
             case LuaMessageId.SCRIPT_REMOVED:
                 self.scripts.pop(fields["script_id"], None)
             case LuaMessageId.SCRIPT_SUSPENDED:
+                script = ScriptInfo(fields["script_id"], fields["full_path_name"])
+                self.scripts[script.script_id] = script
                 self.current_script_id = fields["script_id"]
                 self.current_thread_id = fields["current_thread_id"]
                 self.callstack = list(fields["callstack"])
