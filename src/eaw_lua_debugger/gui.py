@@ -27,6 +27,7 @@ try:
         QMessageBox,
         QPlainTextEdit,
         QPushButton,
+        QSizePolicy,
         QSpinBox,
         QSplitter,
         QStatusBar,
@@ -41,7 +42,7 @@ try:
     )
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
-        "PySide6 is required for the GUI. Run: uv run --extra gui eaw-lua-debugger-gui"
+        "PySide6 is required for the GUI. Run: uv sync"
     ) from exc
 
 
@@ -328,22 +329,36 @@ class MainWindow(QMainWindow):
         return action
 
     def _build_layout(self) -> None:
-        split = QSplitter(Qt.Orientation.Vertical)
-        top = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.top_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.source_tabs = QTabWidget()
-        top.addWidget(self.source_tabs)
-        top.addWidget(self._right_tabs())
-        top.setStretchFactor(0, 5)
-        top.setStretchFactor(1, 1)
-        split.addWidget(top)
-        split.addWidget(self._bottom_tabs())
-        split.setStretchFactor(0, 4)
-        split.setStretchFactor(1, 1)
-        self.setCentralWidget(split)
+        self.source_tabs.setMinimumWidth(560)
+        self.source_tabs.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.top_splitter.addWidget(self.source_tabs)
+        self.top_splitter.addWidget(self._right_tabs())
+        self.top_splitter.setStretchFactor(0, 8)
+        self.top_splitter.setStretchFactor(1, 1)
+        self.top_splitter.setSizes([820, 240])
+        self.main_splitter.addWidget(self.top_splitter)
+        self.main_splitter.addWidget(self._bottom_tabs())
+        self.main_splitter.setStretchFactor(0, 4)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes([610, 230])
+        self.setCentralWidget(self.main_splitter)
         self.setStatusBar(QStatusBar())
 
     def _right_tabs(self) -> QTabWidget:
         tabs = QTabWidget()
+        self.right_tabs = tabs
+        tabs.setMinimumWidth(220)
+        tabs.setMaximumWidth(360)
+        tabs.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Expanding,
+        )
         self.files = QTreeWidget()
         self.files.setHeaderLabels(["ID", "File"])
         self.files.itemSelectionChanged.connect(self._file_selected)

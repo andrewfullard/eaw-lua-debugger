@@ -25,7 +25,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
         "PySide6 and Pygments are required for the GUI. "
-        "Run: uv run --extra gui eaw-lua-debugger-gui"
+        "Run: uv sync"
     ) from exc
 
 

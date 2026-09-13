@@ -72,6 +72,28 @@ def test_gui_worker_table_dump_reports_script_context_and_members():
     assert loaded == [(7, 99, "_G", [TableMember(4, "GlobalName", 2, "GlobalValue")])]
 
 
+def test_gui_layout_prioritizes_source_editor_width():
+    app = QApplication.instance() or QApplication([])
+    window = gui.MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        assert window.source_tabs.minimumWidth() >= 560
+        assert window.right_tabs.minimumWidth() == 220
+        assert window.right_tabs.maximumWidth() == 360
+        assert window.top_splitter.sizes()[0] > window.top_splitter.sizes()[1]
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_gui_breakpoints_render_in_table_and_source_gutter_not_output(tmp_path):
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "Foo.lua"
