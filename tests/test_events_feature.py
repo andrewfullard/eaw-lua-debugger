@@ -1,6 +1,7 @@
-from eaw_lua_debugger import cli, commands
-from eaw_lua_debugger.events import describe_message
-from eaw_lua_debugger.lua_messages import LuaMessage, LuaMessageId
+from eaw_lua_debugger.cli import app as cli
+from eaw_lua_debugger.cli import commands
+from eaw_lua_debugger.debugger.events import describe_message
+from eaw_lua_debugger.protocol.lua_messages import LuaMessage, LuaMessageId
 
 
 def test_describe_output_message():

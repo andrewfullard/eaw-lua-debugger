@@ -1,4 +1,4 @@
-from eaw_lua_debugger.cli import main
+from eaw_lua_debugger.cli.app import main
 
 
 def test_verbose_does_not_change_hello_bytes_output(capsys):

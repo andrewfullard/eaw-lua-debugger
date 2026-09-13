@@ -5,10 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 
-from .client import LuaDebuggerClient
-from .events import describe_message
-from .pgnet import build_connect_request, parse_connect_response
-from .session import run_diagnostic_session
+from ..debugger.client import LuaDebuggerClient
+from ..debugger.events import describe_message
+from ..debugger.session import run_diagnostic_session
+from ..protocol.pgnet import build_connect_request, parse_connect_response
 
 
 def hello_bytes(args: argparse.Namespace) -> int:

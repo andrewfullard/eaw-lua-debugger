@@ -1,6 +1,6 @@
-from eaw_lua_debugger.client import ScriptInfo, TableMember, ThreadInfo, VariableValue
-from eaw_lua_debugger.gui_state import BreakpointSpec, DebuggerState
-from eaw_lua_debugger.lua_messages import LuaMessage, LuaMessageId
+from eaw_lua_debugger.debugger.types import ScriptInfo, TableMember, ThreadInfo, VariableValue
+from eaw_lua_debugger.gui.state import BreakpointSpec, DebuggerState
+from eaw_lua_debugger.protocol.lua_messages import LuaMessage, LuaMessageId
 
 
 def test_debugger_state_tracks_scripts_threads_and_suspended_callstack():

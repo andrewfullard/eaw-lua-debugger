@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from bitarray import bitarray
 
-from .exceptions import ProtocolError
+from ..core.exceptions import ProtocolError
 
 
 @dataclass(frozen=True)

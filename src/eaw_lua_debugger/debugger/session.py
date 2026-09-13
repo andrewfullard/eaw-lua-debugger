@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from .lua_messages import LuaMessage
+from ..protocol.lua_messages import LuaMessage
 
 
 def run_diagnostic_session(

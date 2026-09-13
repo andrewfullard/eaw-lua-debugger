@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
+from ..core.exceptions import ProtocolError
 from .bitstream import BitBuffer, BitReader, BitWriter
-from .exceptions import ProtocolError
 
 LUA_DEBUGGER_MAGIC = 0xD
 

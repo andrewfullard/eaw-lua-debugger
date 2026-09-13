@@ -1,5 +1,5 @@
-from eaw_lua_debugger.lua_messages import LuaMessage, LuaMessageId
-from eaw_lua_debugger.session import run_diagnostic_session
+from eaw_lua_debugger.debugger.session import run_diagnostic_session
+from eaw_lua_debugger.protocol.lua_messages import LuaMessage, LuaMessageId
 
 
 class FakeClient:

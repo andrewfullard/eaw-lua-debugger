@@ -6,8 +6,8 @@ import time
 from dataclasses import dataclass, field
 from logging import getLogger
 
+from ..core.exceptions import ProtocolError
 from .bitstream import BitBuffer, BitWriter
-from .exceptions import ProtocolError
 from .pgnet import (
     MAX_PACKET_ID,
     SEQUENCER_MAGIC,

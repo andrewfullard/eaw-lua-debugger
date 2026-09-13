@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .gui_sources import SourceFile, format_source_lines
+from .sources import SourceFile, format_source_lines
 
 try:
     from pygments import lex

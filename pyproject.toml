@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [project.scripts]
-eaw-lua-debugger = "eaw_lua_debugger.cli:main"
-eaw-lua-debugger-gui = "eaw_lua_debugger.gui:main"
+eaw-lua-debugger = "eaw_lua_debugger.cli.app:main"
+eaw-lua-debugger-gui = "eaw_lua_debugger.gui.app:main"
 
 [dependency-groups]
 dev = [

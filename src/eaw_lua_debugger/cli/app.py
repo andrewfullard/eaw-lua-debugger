@@ -6,9 +6,9 @@ import argparse
 import logging
 import sys
 
+from ..core.exceptions import EawLuaDebuggerError
+from ..debugger.client import CONTROL_MESSAGES
 from . import commands
-from .client import CONTROL_MESSAGES
-from .exceptions import EawLuaDebuggerError
 
 
 def _add_connection_args(parser: argparse.ArgumentParser) -> None:

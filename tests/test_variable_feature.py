@@ -1,6 +1,7 @@
-from eaw_lua_debugger.bitstream import BitWriter
-from eaw_lua_debugger.client import LuaDebuggerClient, VariableValue
-from eaw_lua_debugger.lua_messages import LuaMessage, LuaMessageId, parse_lua_message
+from eaw_lua_debugger.debugger.client import LuaDebuggerClient
+from eaw_lua_debugger.debugger.types import VariableValue
+from eaw_lua_debugger.protocol.bitstream import BitWriter
+from eaw_lua_debugger.protocol.lua_messages import LuaMessage, LuaMessageId, parse_lua_message
 
 
 def test_parse_variable_dump_response():

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .client import ScriptInfo, TableMember, ThreadInfo, VariableValue
-from .events import describe_message
-from .lua_messages import LuaMessage, LuaMessageId
+from ..debugger.events import describe_message
+from ..debugger.types import ScriptInfo, TableMember, ThreadInfo, VariableValue
+from ..protocol.lua_messages import LuaMessage, LuaMessageId
 
 
 @dataclass(frozen=True)

@@ -1,15 +1,15 @@
 import pytest
 
-from eaw_lua_debugger.bitstream import BitBuffer, BitWriter
-from eaw_lua_debugger.exceptions import ProtocolError
-from eaw_lua_debugger.pgnet import (
+from eaw_lua_debugger.core.exceptions import ProtocolError
+from eaw_lua_debugger.protocol.bitstream import BitBuffer, BitWriter
+from eaw_lua_debugger.protocol.pgnet import (
     MAX_PACKET_ID,
     SEQUENCER_MAGIC,
     PacketKind,
     PgNetPacket,
     decode_datagram,
 )
-from eaw_lua_debugger.reliable import CHUNK_DATA_SIZE, DIRECT_SEND_THRESHOLD, ReliableState
+from eaw_lua_debugger.protocol.reliable import CHUNK_DATA_SIZE, DIRECT_SEND_THRESHOLD, ReliableState
 
 
 def test_reliable_receive_wraps_22_bit_packet_ids():

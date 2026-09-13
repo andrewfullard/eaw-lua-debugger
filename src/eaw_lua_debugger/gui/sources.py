@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .client import ScriptInfo
+from ..debugger.types import ScriptInfo
 
 
 @dataclass(frozen=True)

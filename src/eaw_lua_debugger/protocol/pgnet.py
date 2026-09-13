@@ -6,8 +6,8 @@ import binascii
 from dataclasses import dataclass
 from enum import IntEnum
 
+from ..core.exceptions import CrcMismatch, ProtocolError
 from .bitstream import BitBuffer, BitReader, BitWriter
-from .exceptions import CrcMismatch, ProtocolError
 
 MAX_PACKET_ID = 0x3FFFFF
 CONNECT_MAGIC = 0xF000F000

@@ -1,5 +1,6 @@
-from eaw_lua_debugger import cli, commands
-from eaw_lua_debugger.client import TableMember
+from eaw_lua_debugger.cli import app as cli
+from eaw_lua_debugger.cli import commands
+from eaw_lua_debugger.debugger.types import TableMember
 
 
 class FakeClient:

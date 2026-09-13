@@ -6,9 +6,9 @@ import argparse
 
 from PySide6.QtWidgets import QApplication
 
-from eaw_lua_debugger import gui
-from eaw_lua_debugger.client import ScriptInfo, TableMember, ThreadInfo
-from eaw_lua_debugger.lua_messages import LuaMessage, LuaMessageId
+from eaw_lua_debugger.debugger.types import ScriptInfo, TableMember, ThreadInfo
+from eaw_lua_debugger.gui import DebuggerWorker, MainWindow
+from eaw_lua_debugger.protocol.lua_messages import LuaMessage, LuaMessageId
 
 
 class FakeClient:
@@ -35,7 +35,7 @@ class FakeClient:
 
 
 def test_gui_loading_a_script_does_not_send_context_or_break_commands():
-    worker = gui.DebuggerWorker()
+    worker = DebuggerWorker()
     client = FakeClient()
     worker.client = client
 
@@ -49,7 +49,7 @@ def test_gui_worker_reports_backend_timeout_without_traceback():
         def request_threads(self, script_id):
             raise TimeoutError("boom")
 
-    worker = gui.DebuggerWorker()
+    worker = DebuggerWorker()
     worker.client = TimeoutClient()
     errors = []
     worker.error.connect(errors.append)
@@ -60,7 +60,7 @@ def test_gui_worker_reports_backend_timeout_without_traceback():
 
 
 def test_gui_worker_table_dump_reports_script_context_and_members():
-    worker = gui.DebuggerWorker()
+    worker = DebuggerWorker()
     client = FakeClient()
     worker.client = client
     loaded = []
@@ -74,7 +74,7 @@ def test_gui_worker_table_dump_reports_script_context_and_members():
 
 def test_gui_layout_prioritizes_source_editor_width():
     app = QApplication.instance() or QApplication([])
-    window = gui.MainWindow(
+    window = MainWindow(
         argparse.Namespace(
             host="127.0.0.1",
             port=1234,
@@ -98,7 +98,7 @@ def test_gui_breakpoints_render_in_table_and_source_gutter_not_output(tmp_path):
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "Foo.lua"
     source.write_text("a\nb\n", encoding="utf-8")
-    window = gui.MainWindow(
+    window = MainWindow(
         argparse.Namespace(
             host="127.0.0.1",
             port=1234,
@@ -131,7 +131,7 @@ def test_selecting_game_script_does_not_request_variables(tmp_path):
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "Foo.lua"
     source.write_text("a\nb\n", encoding="utf-8")
-    window = gui.MainWindow(
+    window = MainWindow(
         argparse.Namespace(
             host="127.0.0.1",
             port=1234,
@@ -157,7 +157,7 @@ def test_selecting_game_script_does_not_request_variables(tmp_path):
 
 def test_suspended_script_refreshes_variables_even_when_script_id_is_unchanged():
     app = QApplication.instance() or QApplication([])
-    window = gui.MainWindow(
+    window = MainWindow(
         argparse.Namespace(
             host="127.0.0.1",
             port=1234,
@@ -206,7 +206,7 @@ def test_local_source_open_does_not_request_game_variables(tmp_path):
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "Local.lua"
     source.write_text("a\nb\n", encoding="utf-8")
-    window = gui.MainWindow(
+    window = MainWindow(
         argparse.Namespace(
             host="127.0.0.1",
             port=1234,
@@ -231,7 +231,7 @@ def test_local_source_breakpoints_keep_local_script_id_and_render_gutter(tmp_pat
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "Local.lua"
     source.write_text("a\nb\n", encoding="utf-8")
-    window = gui.MainWindow(
+    window = MainWindow(
         argparse.Namespace(
             host="127.0.0.1",
             port=1234,

@@ -1,9 +1,14 @@
 import pytest
 
-from eaw_lua_debugger.client import LuaDebuggerClient
-from eaw_lua_debugger.exceptions import Timeout
-from eaw_lua_debugger.lua_messages import LuaMessageId, encode_lua_message
-from eaw_lua_debugger.pgnet import PacketKind, PgNetPacket, decode_datagram, encode_datagram
+from eaw_lua_debugger.core.exceptions import Timeout
+from eaw_lua_debugger.debugger.client import LuaDebuggerClient
+from eaw_lua_debugger.protocol.lua_messages import LuaMessageId, encode_lua_message
+from eaw_lua_debugger.protocol.pgnet import (
+    PacketKind,
+    PgNetPacket,
+    decode_datagram,
+    encode_datagram,
+)
 
 KNOWN_CONNECT_RESPONSE = bytes.fromhex(
     "3d3c16e500000000e001e00ba6e0dedee81ca6e8c2e4aec2e4e692746e70706800"

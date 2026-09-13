@@ -1,5 +1,6 @@
-from eaw_lua_debugger.client import LuaDebuggerClient, VariableValue
-from eaw_lua_debugger.lua_messages import LuaMessage, LuaMessageId
+from eaw_lua_debugger.debugger.client import LuaDebuggerClient
+from eaw_lua_debugger.debugger.types import VariableValue
+from eaw_lua_debugger.protocol.lua_messages import LuaMessage, LuaMessageId
 
 
 def test_dump_variable_skips_mismatched_variable_response():

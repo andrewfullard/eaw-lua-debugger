@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .lua_messages import LuaMessage, LuaMessageId
+from ..protocol.lua_messages import LuaMessage, LuaMessageId
 
 
 def describe_message(message: LuaMessage) -> str:

@@ -7,14 +7,24 @@ import socket
 import time
 from collections import deque
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from logging import getLogger
 
-from .bitstream import BitBuffer
-from .exceptions import Timeout
-from .lua_messages import LuaMessage, LuaMessageId, encode_lua_message, parse_lua_message
-from .pgnet import PacketKind, build_connect_request, decode_datagram, parse_connect_response
-from .reliable import ReliableState
+from ..core.exceptions import Timeout
+from ..protocol.bitstream import BitBuffer
+from ..protocol.lua_messages import (
+    LuaMessage,
+    LuaMessageId,
+    encode_lua_message,
+    parse_lua_message,
+)
+from ..protocol.pgnet import (
+    PacketKind,
+    build_connect_request,
+    decode_datagram,
+    parse_connect_response,
+)
+from ..protocol.reliable import ReliableState
+from .types import ScriptInfo, TableMember, ThreadInfo, VariableValue
 
 log = getLogger(__name__)
 CONTROL_MESSAGES = {
@@ -24,33 +34,6 @@ CONTROL_MESSAGES = {
     "step-into": LuaMessageId.STEP_INTO,
     "step-out": LuaMessageId.STEP_OUT,
 }
-
-
-@dataclass(frozen=True)
-class ScriptInfo:
-    script_id: int
-    full_path_name: str
-
-
-@dataclass(frozen=True)
-class ThreadInfo:
-    thread_index: int
-    thread_name: str
-
-
-@dataclass(frozen=True)
-class VariableValue:
-    variable_name: str
-    value_type: int
-    value_text: str
-
-
-@dataclass(frozen=True)
-class TableMember:
-    key_type: int
-    key_text: str
-    value_type: int
-    value_text: str
 
 
 class LuaDebuggerClient:

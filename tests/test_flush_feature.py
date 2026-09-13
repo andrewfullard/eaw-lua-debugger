@@ -1,7 +1,7 @@
-from eaw_lua_debugger.bitstream import BitBuffer
-from eaw_lua_debugger.client import LuaDebuggerClient
-from eaw_lua_debugger.exceptions import Timeout
-from eaw_lua_debugger.pgnet import PacketKind, PgNetPacket, encode_datagram
+from eaw_lua_debugger.core.exceptions import Timeout
+from eaw_lua_debugger.debugger.client import LuaDebuggerClient
+from eaw_lua_debugger.protocol.bitstream import BitBuffer
+from eaw_lua_debugger.protocol.pgnet import PacketKind, PgNetPacket, encode_datagram
 
 
 class AckSocket:

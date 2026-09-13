@@ -1,7 +1,7 @@
 import pytest
 
-from eaw_lua_debugger.client import LuaDebuggerClient
-from eaw_lua_debugger.lua_messages import LuaMessageId
+from eaw_lua_debugger.debugger.client import LuaDebuggerClient
+from eaw_lua_debugger.protocol.lua_messages import LuaMessageId
 
 
 @pytest.mark.parametrize(

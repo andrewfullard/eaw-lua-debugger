@@ -1,5 +1,5 @@
-from eaw_lua_debugger.client import ScriptInfo
-from eaw_lua_debugger.gui_sources import find_lua_files, format_source_lines, load_script_source
+from eaw_lua_debugger.debugger.types import ScriptInfo
+from eaw_lua_debugger.gui.sources import find_lua_files, format_source_lines, load_script_source
 
 
 def test_load_script_source_uses_data_scripts_suffix(tmp_path):
