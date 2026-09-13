@@ -11,8 +11,14 @@ dependencies = [
     "bitarray>=3.11.0",
 ]
 
+[project.optional-dependencies]
+gui = [
+    "PySide6>=6.10.0",
+]
+
 [project.scripts]
 eaw-lua-debugger = "eaw_lua_debugger.cli:main"
+eaw-lua-debugger-gui = "eaw_lua_debugger.gui:main"
 
 [dependency-groups]
 dev = [
