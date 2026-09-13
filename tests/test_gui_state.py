@@ -26,6 +26,7 @@ def test_debugger_state_tracks_scripts_threads_and_suspended_callstack():
     assert state.current_script_id == 7
     assert state.current_thread_id == 3
     assert state.callstack == ["Foo.lua:10", "Bar.lua:20"]
+    assert state.callstacks[7] == ["Foo.lua:10", "Bar.lua:20"]
     assert state.threads[7][0].thread_name == "main"
 
 

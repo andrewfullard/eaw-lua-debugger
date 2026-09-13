@@ -33,6 +33,7 @@ class DebuggerState:
     threads: dict[int, list[ThreadInfo]] = field(default_factory=dict)
     child_scripts: dict[int, list[str]] = field(default_factory=dict)
     callstack: list[str] = field(default_factory=list)
+    callstacks: dict[int, list[str]] = field(default_factory=dict)
     output: list[str] = field(default_factory=list)
     parse_errors: list[str] = field(default_factory=list)
     variables: dict[str, VariableValue] = field(default_factory=dict)
@@ -91,6 +92,7 @@ class DebuggerState:
                 self.current_script_id = fields["script_id"]
                 self.current_thread_id = fields["current_thread_id"]
                 self.callstack = list(fields["callstack"])
+                self.callstacks[fields["script_id"]] = self.callstack
                 self.threads[fields["script_id"]] = [
                     ThreadInfo(item["thread_index"], item["thread_name"])
                     for item in fields["threads"]

@@ -59,6 +59,21 @@ class TimeoutSocket:
         self.closed = True
 
 
+class ResetSocket:
+    def __init__(self):
+        self.sent = []
+        self.closed = False
+
+    def sendto(self, datagram, remote):
+        self.sent.append((datagram, remote))
+
+    def recvfrom(self, _size):
+        raise ConnectionResetError
+
+    def close(self):
+        self.closed = True
+
+
 def test_close_sends_goodbye_after_partial_lua_handshake_timeout():
     sock = TimeoutSocket()
     client = LuaDebuggerClient(timeout=0.01)
@@ -70,6 +85,18 @@ def test_close_sends_goodbye_after_partial_lua_handshake_timeout():
         client.close()
     else:
         raise AssertionError("expected timeout")
+
+    assert LuaMessageId.GOODBYE in _sent_lua_message_ids(sock.sent)
+    assert sock.closed is True
+
+
+def test_close_does_not_raise_when_remote_resets_during_goodbye_flush():
+    sock = ResetSocket()
+    client = LuaDebuggerClient(timeout=0.01)
+    client.socket = sock
+    client._lua_connected = True
+
+    client.close()
 
     assert LuaMessageId.GOODBYE in _sent_lua_message_ids(sock.sent)
     assert sock.closed is True

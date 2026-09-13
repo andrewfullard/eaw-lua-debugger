@@ -218,7 +218,8 @@ class MainWindow(QMainWindow):
         self.files = QTreeWidget()
         self.files.setHeaderLabels(["ID", "File"])
         self.files.itemSelectionChanged.connect(self._file_selected)
-        self.callstack = QListWidget()
+        self.callstack = QTreeWidget()
+        self.callstack.setHeaderLabels(["Depth", "Frame"])
         self.threads = QTreeWidget()
         self.threads.setHeaderLabels(["ID", "Thread"])
         self.threads.itemSelectionChanged.connect(self._thread_selected)
@@ -337,10 +338,9 @@ class MainWindow(QMainWindow):
         if self.state.parse_errors:
             self.parse_errors.clear()
             self.parse_errors.addItems(self.state.parse_errors[-500:])
-        self.callstack.clear()
-        self.callstack.addItems(self.state.callstack)
         if self.state.current_script_id is not None:
             self._render_threads(self.state.current_script_id)
+            self._render_callstack(self.state.current_script_id)
             if script_was_suspended or self.state.current_script_id != previous_script_id:
                 self._select_game_script(
                     self.state.current_script_id,
@@ -394,6 +394,7 @@ class MainWindow(QMainWindow):
         if open_source:
             self._open_source(self.state.scripts[script_id])
         self._render_threads(script_id)
+        self._render_callstack(script_id)
         self._render_variables()
         if request_threads and script_id >= 0:
             self.threads_requested.emit(script_id)
@@ -623,6 +624,12 @@ class MainWindow(QMainWindow):
             self.threads.addTopLevelItem(
                 QTreeWidgetItem([str(thread.thread_index), thread.thread_name])
             )
+
+    def _render_callstack(self, script_id: int) -> None:
+        self.callstack.clear()
+        for depth, frame in enumerate(self.state.callstacks.get(script_id, [])):
+            self.callstack.addTopLevelItem(QTreeWidgetItem([str(depth), frame]))
+        self.callstack.resizeColumnToContents(0)
 
     def _render_variables(self) -> None:
         self.variables.clear()

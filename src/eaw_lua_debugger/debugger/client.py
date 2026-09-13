@@ -85,6 +85,8 @@ class LuaDebuggerClient:
                     self.flush()
                 except Timeout:
                     log.warning("timed out waiting for GOODBYE ACK")
+                except ConnectionResetError:
+                    log.warning("remote debugger endpoint reset while sending GOODBYE")
                 self._lua_connected = False
                 self._lua_goodbye_needed = False
             self.socket.close()
@@ -176,6 +178,9 @@ class LuaDebuggerClient:
         except TimeoutError:
             return False, []
         except BlockingIOError:
+            return False, []
+        except ConnectionResetError:
+            log.warning("remote debugger endpoint reset")
             return False, []
         if address != self.remote:
             log.debug("ignoring datagram from unexpected endpoint %s", address)

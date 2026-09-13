@@ -222,6 +222,54 @@ def test_suspended_script_does_not_request_variables():
         app.processEvents()
 
 
+def test_callstack_tab_shows_selected_script_callstack():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        window._message_received(
+            LuaMessage(
+                LuaMessageId.SCRIPT_SUSPENDED,
+                {
+                    "script_id": 7,
+                    "current_thread_id": 0,
+                    "full_path_name": "Data/Scripts/Foo.lua",
+                    "callstack": ["Foo.lua:10", "Bar.lua:20"],
+                    "threads": [],
+                },
+                raw_payload=None,
+            )
+        )
+
+        assert window.callstack.topLevelItemCount() == 2
+        first_frame = window.callstack.topLevelItem(0)
+        second_frame = window.callstack.topLevelItem(1)
+        assert [first_frame.text(0), first_frame.text(1)] == [
+            "0",
+            "Foo.lua:10",
+        ]
+        assert [second_frame.text(0), second_frame.text(1)] == [
+            "1",
+            "Bar.lua:20",
+        ]
+
+        window.state.scripts[8] = ScriptInfo(8, "Data/Scripts/Other.lua")
+        window._select_game_script(8, open_source=False, request_threads=False)
+
+        assert window.callstack.topLevelItemCount() == 0
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_local_source_open_does_not_request_game_variables(tmp_path):
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "Local.lua"
