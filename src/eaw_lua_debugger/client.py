@@ -17,12 +17,25 @@ from .pgnet import PacketKind, build_connect_request, decode_datagram, parse_con
 from .reliable import ReliableState
 
 log = getLogger(__name__)
+CONTROL_MESSAGES = {
+    "break": LuaMessageId.BREAK_ALL,
+    "continue": LuaMessageId.CONTINUE,
+    "step-over": LuaMessageId.STEP_OVER,
+    "step-into": LuaMessageId.STEP_INTO,
+    "step-out": LuaMessageId.STEP_OUT,
+}
 
 
 @dataclass(frozen=True)
 class ScriptInfo:
     script_id: int
     full_path_name: str
+
+
+@dataclass(frozen=True)
+class ThreadInfo:
+    thread_index: int
+    thread_name: str
 
 
 class LuaDebuggerClient:
@@ -46,6 +59,7 @@ class LuaDebuggerClient:
         self.server_name: str | None = None
         self.reliable = ReliableState(resend_interval=resend_interval)
         self.messages: deque[LuaMessage] = deque()
+        self._lua_connected = False
 
     def __enter__(self) -> LuaDebuggerClient:
         self.open()
@@ -65,6 +79,9 @@ class LuaDebuggerClient:
 
     def close(self) -> None:
         if self.socket is not None:
+            if self._lua_connected:
+                self.send_lua(LuaMessageId.GOODBYE)
+                self._lua_connected = False
             self.socket.close()
             self.socket = None
 
@@ -98,6 +115,7 @@ class LuaDebuggerClient:
                     self.socket.sendto(outbound, self.remote)
             self.send_lua(LuaMessageId.HELLO)
             self.wait_for(LuaMessageId.HELLO, deadline=deadline)
+            self._lua_connected = True
             log.info("Lua debugger hello completed")
             return self.server_name
         raise Timeout("timed out waiting for PGNet Spoot response")
@@ -191,6 +209,26 @@ class LuaDebuggerClient:
             ScriptInfo(script_id=item["script_id"], full_path_name=item["full_path_name"])
             for item in message.fields["scripts"]
         ]
+
+    def request_threads(self, script_id: int) -> list[ThreadInfo]:
+        self.send_lua(LuaMessageId.REQUEST_THREAD_LIST, script_id)
+        message = self.wait_for(LuaMessageId.THREAD_LIST)
+        return [
+            ThreadInfo(thread_index=item["thread_index"], thread_name=item["thread_name"])
+            for item in message.fields["threads"]
+        ]
+
+    def attach_script(self, script_id: int) -> list[str]:
+        self.send_lua(LuaMessageId.ATTACH_SCRIPT, script_id)
+        message = self.wait_for(LuaMessageId.CHILD_SCRIPT_LIST)
+        return list(message.fields["child_script_names"])
+
+    def send_control(self, command: str) -> None:
+        try:
+            message_id = CONTROL_MESSAGES[command]
+        except KeyError as exc:
+            raise ValueError(f"unknown control command {command!r}") from exc
+        self.send_lua(message_id)
 
     def iter_messages(self, *, timeout: float | None = None) -> Iterable[LuaMessage]:
         deadline = None if timeout is None else time.monotonic() + timeout
