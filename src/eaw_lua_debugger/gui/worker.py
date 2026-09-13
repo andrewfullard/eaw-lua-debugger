@@ -51,7 +51,7 @@ class DebuggerWorker(QObject):
         if self.client is None:
             return
         try:
-            for message in self.client.service_once():
+            for message in self.client.service_available():
                 self.message_received.emit(message)
         except Exception as exc:  # noqa: BLE001
             self.error.emit(str(exc))

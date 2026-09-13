@@ -76,7 +76,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Not Connected")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.service_requested.emit)
-        self.timer.start(80)
+        self.timer.start(10)
 
     def _build_worker(self) -> None:
         self.thread = QThread(self)
@@ -343,7 +343,6 @@ class MainWindow(QMainWindow):
                 self._select_game_script(
                     self.state.current_script_id,
                     open_source=False,
-                    request_variables=script_was_suspended,
                 )
 
     def _variable_loaded(self, value: object) -> None:
@@ -375,14 +374,13 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         script_id = int(selected[0].text(0))
-        self._select_game_script(script_id, open_source=True, request_variables=False)
+        self._select_game_script(script_id, open_source=True)
 
     def _select_game_script(
         self,
         script_id: int,
         *,
         open_source: bool,
-        request_variables: bool,
     ) -> None:
         if script_id not in self.state.scripts:
             return
@@ -392,18 +390,6 @@ class MainWindow(QMainWindow):
         if open_source:
             self._open_source(self.state.scripts[script_id])
         self._render_variables()
-        if request_variables:
-            self._request_script_variables(script_id)
-
-    def _request_script_variables(self, script_id: int) -> None:
-        if script_id < 0:
-            return
-        request_id = self._next_table_request_id
-        self._next_table_request_id += 1
-        self._pending_variable_requests[request_id] = script_id
-        self.variables.clear()
-        self.statusBar().showMessage(f"Loading variables for script {script_id}...")
-        self.table_requested.emit(script_id, request_id, "_G", [])
 
     def _thread_selected(self) -> None:
         selected = self.threads.selectedItems()

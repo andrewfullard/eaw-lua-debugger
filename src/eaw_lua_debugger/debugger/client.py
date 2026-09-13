@@ -71,6 +71,7 @@ class LuaDebuggerClient:
         if self.socket is not None:
             return
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
         sock.bind(("0.0.0.0", self.local_port))
         sock.settimeout(0.1)
         self.socket = sock
@@ -144,6 +145,27 @@ class LuaDebuggerClient:
     def service_once(self) -> list[LuaMessage]:
         """Service one UDP receive attempt, ACKing reliable packets immediately."""
 
+        _received, messages = self._service_once()
+        return messages
+
+    def service_available(self, *, max_packets: int = 256) -> list[LuaMessage]:
+        """Drain immediately available UDP packets without waiting for the next GUI tick."""
+
+        assert self.socket is not None
+        old_timeout = self.socket.gettimeout()
+        self.socket.settimeout(0.001)
+        messages: list[LuaMessage] = []
+        try:
+            for _ in range(max_packets):
+                received, packet_messages = self._service_once()
+                if not received:
+                    break
+                messages.extend(packet_messages)
+        finally:
+            self.socket.settimeout(old_timeout)
+        return messages
+
+    def _service_once(self) -> tuple[bool, list[LuaMessage]]:
         assert self.socket is not None
         for datagram in self.reliable.due_resends():
             log.warning("resending reliable datagram bytes=%s", len(datagram))
@@ -152,10 +174,12 @@ class LuaDebuggerClient:
         try:
             datagram, address = self.socket.recvfrom(65535)
         except TimeoutError:
-            return []
+            return False, []
+        except BlockingIOError:
+            return False, []
         if address != self.remote:
             log.debug("ignoring datagram from unexpected endpoint %s", address)
-            return []
+            return True, []
 
         packet = decode_datagram(datagram)
         log.debug(
@@ -172,7 +196,7 @@ class LuaDebuggerClient:
             self.socket.sendto(outbound, self.remote)
         for outbound in result.nacks:
             nack = decode_datagram(outbound)
-            log.warning("sending NACK id=%s", nack.packet_id)
+            log.debug("sending NACK id=%s", nack.packet_id)
             self.socket.sendto(outbound, self.remote)
         for outbound in result.resends:
             resend = decode_datagram(outbound)
@@ -190,7 +214,7 @@ class LuaDebuggerClient:
             log.info("received Lua message id=%s name=%s", message.message_id, message.name)
             self.messages.append(message)
             messages.append(message)
-        return messages
+        return True, messages
 
     def wait_for(
         self,

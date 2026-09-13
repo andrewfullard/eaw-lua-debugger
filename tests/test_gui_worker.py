@@ -29,6 +29,10 @@ class FakeClient:
         self.calls.append(("request_threads", script_id))
         return [ThreadInfo(3, "main")]
 
+    def service_available(self):
+        self.calls.append(("service_available",))
+        return []
+
     def dump_table(self, script_id, context_id, name, path):
         self.calls.append(("dump_table", script_id, context_id, name, path))
         return [TableMember(4, "GlobalName", 2, "GlobalValue")]
@@ -57,6 +61,16 @@ def test_gui_worker_reports_backend_timeout_without_traceback():
     worker.load_script(7)
 
     assert errors == ["boom"]
+
+
+def test_gui_worker_drains_available_packets():
+    worker = DebuggerWorker()
+    client = FakeClient()
+    worker.client = client
+
+    worker.service_once()
+
+    assert client.calls == [("service_available",)]
 
 
 def test_gui_worker_table_dump_reports_script_context_and_members():
@@ -155,7 +169,7 @@ def test_selecting_game_script_does_not_request_variables(tmp_path):
         app.processEvents()
 
 
-def test_suspended_script_refreshes_variables_even_when_script_id_is_unchanged():
+def test_suspended_script_does_not_request_variables():
     app = QApplication.instance() or QApplication([])
     window = MainWindow(
         argparse.Namespace(
@@ -186,17 +200,9 @@ def test_suspended_script_refreshes_variables_even_when_script_id_is_unchanged()
         window._message_received(message)
         window._message_received(message)
 
-        assert requested == [(7, 1, "_G", []), (7, 2, "_G", [])]
-
-        window._table_loaded(7, 2, "_G", [TableMember(4, "GlobalName", 2, "GlobalValue")])
-
-        assert window.variables.topLevelItemCount() == 1
-        row = window.variables.topLevelItem(0)
-        assert [row.text(0), row.text(1), row.text(2)] == [
-            "GlobalName",
-            "2",
-            "GlobalValue",
-        ]
+        assert requested == []
+        assert window.state.current_script_id == 7
+        assert window.var_script.value() == 7
     finally:
         window.close()
         app.processEvents()
