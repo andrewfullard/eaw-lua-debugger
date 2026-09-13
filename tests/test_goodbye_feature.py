@@ -1,6 +1,6 @@
 from eaw_lua_debugger.client import LuaDebuggerClient
 from eaw_lua_debugger.lua_messages import LuaMessageId, parse_lua_message
-from eaw_lua_debugger.pgnet import decode_datagram
+from eaw_lua_debugger.pgnet import PacketKind, PgNetPacket, decode_datagram, encode_datagram
 
 
 class FakeSocket:
@@ -10,6 +10,9 @@ class FakeSocket:
 
     def sendto(self, datagram, remote):
         self.sent.append((datagram, remote))
+
+    def recvfrom(self, _size):
+        return encode_datagram(PgNetPacket(0, PacketKind.ACK)), ("127.0.0.1", 1234)
 
     def close(self):
         self.closed = True

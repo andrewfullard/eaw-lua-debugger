@@ -39,7 +39,7 @@ def test_client_request_threads_sends_request_and_returns_threads():
     )
     client = LuaDebuggerClient()
     client.send_lua = lambda *args: sent.append(args)
-    client.wait_for = lambda message_id: message
+    client.wait_for = lambda message_id, **_: message
 
     assert client.request_threads(42) == [ThreadInfo(thread_index=3, thread_name="main")]
     assert sent == [(LuaMessageId.REQUEST_THREAD_LIST, 42)]

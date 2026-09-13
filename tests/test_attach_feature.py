@@ -34,7 +34,7 @@ def test_client_attach_script_sends_attach_and_returns_child_names():
     )
     client = LuaDebuggerClient()
     client.send_lua = lambda *args: sent.append(args)
-    client.wait_for = lambda message_id: message
+    client.wait_for = lambda message_id, **_: message
 
     assert client.attach_script(7) == ["child"]
     assert sent == [(LuaMessageId.ATTACH_SCRIPT, 7)]

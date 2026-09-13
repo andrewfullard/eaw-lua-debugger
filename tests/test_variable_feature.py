@@ -36,7 +36,7 @@ def test_client_dump_variable_sends_request_and_returns_value():
     )
     client = LuaDebuggerClient()
     client.send_lua = lambda *args: sent.append(args)
-    client.wait_for = lambda message_id: message
+    client.wait_for = lambda message_id, **_: message
 
     assert client.dump_variable(9, "Foo") == VariableValue("Foo", 3, "Bar")
     assert sent == [(LuaMessageId.DUMP_VARIABLE, 9, "Foo")]

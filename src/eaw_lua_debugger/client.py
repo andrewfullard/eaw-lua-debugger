@@ -6,7 +6,7 @@ import os
 import socket
 import time
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from logging import getLogger
 
@@ -88,6 +88,10 @@ class LuaDebuggerClient:
         if self.socket is not None:
             if self._lua_connected:
                 self.send_lua(LuaMessageId.GOODBYE)
+                try:
+                    self.flush()
+                except Timeout:
+                    log.warning("timed out waiting for GOODBYE ACK")
                 self._lua_connected = False
             self.socket.close()
             self.socket = None
@@ -198,16 +202,25 @@ class LuaDebuggerClient:
         message_id: int | LuaMessageId,
         *,
         deadline: float | None = None,
+        predicate: Callable[[LuaMessage], bool] | None = None,
     ) -> LuaMessage:
         target = int(message_id)
+        predicate = (lambda _message: True) if predicate is None else predicate
         deadline = time.monotonic() + self.timeout if deadline is None else deadline
         while time.monotonic() < deadline:
             for message in list(self.messages):
-                if message.message_id == target:
+                if message.message_id == target and predicate(message):
                     self.messages.remove(message)
                     return message
             self.service_once()
         raise Timeout(f"timed out waiting for Lua message ID {target}")
+
+    def flush(self, *, deadline: float | None = None) -> None:
+        deadline = time.monotonic() + self.timeout if deadline is None else deadline
+        while self.reliable.pending and time.monotonic() < deadline:
+            self.service_once()
+        if self.reliable.pending:
+            raise Timeout("timed out waiting for reliable ACKs")
 
     def request_scripts(self) -> list[ScriptInfo]:
         self.send_lua(LuaMessageId.REQUEST_SCRIPT_LIST)
@@ -219,7 +232,10 @@ class LuaDebuggerClient:
 
     def request_threads(self, script_id: int) -> list[ThreadInfo]:
         self.send_lua(LuaMessageId.REQUEST_THREAD_LIST, script_id)
-        message = self.wait_for(LuaMessageId.THREAD_LIST)
+        message = self.wait_for(
+            LuaMessageId.THREAD_LIST,
+            predicate=lambda message: message.fields["script_id"] == script_id,
+        )
         return [
             ThreadInfo(thread_index=item["thread_index"], thread_name=item["thread_name"])
             for item in message.fields["threads"]
@@ -227,7 +243,10 @@ class LuaDebuggerClient:
 
     def attach_script(self, script_id: int) -> list[str]:
         self.send_lua(LuaMessageId.ATTACH_SCRIPT, script_id)
-        message = self.wait_for(LuaMessageId.CHILD_SCRIPT_LIST)
+        message = self.wait_for(
+            LuaMessageId.CHILD_SCRIPT_LIST,
+            predicate=lambda message: message.fields["parent_script_id"] == script_id,
+        )
         return list(message.fields["child_script_names"])
 
     def send_control(self, command: str) -> None:
@@ -271,12 +290,26 @@ class LuaDebuggerClient:
 
     def dump_variable(self, script_id: int, variable_name: str) -> VariableValue:
         self.send_lua(LuaMessageId.DUMP_VARIABLE, script_id, variable_name)
-        message = self.wait_for(LuaMessageId.VARIABLE_DUMP)
+        message = self.wait_for(
+            LuaMessageId.VARIABLE_DUMP,
+            predicate=lambda message: (
+                message.fields["script_id"] == script_id
+                and message.fields["variable_name"] == variable_name
+            ),
+        )
         return VariableValue(
             variable_name=message.fields["variable_name"],
             value_type=message.fields["value_type"],
             value_text=message.fields["value_text"],
         )
+
+    def execute_text(self, script_id: int, text: str) -> str:
+        self.send_lua(LuaMessageId.EXECUTE_TEXT, script_id, text)
+        message = self.wait_for(
+            LuaMessageId.EXECUTE_TEXT_RESPONSE,
+            predicate=lambda message: message.fields["script_id"] == script_id,
+        )
+        return message.fields["result_text"]
 
     def iter_messages(self, *, timeout: float | None = None) -> Iterable[LuaMessage]:
         deadline = None if timeout is None else time.monotonic() + timeout

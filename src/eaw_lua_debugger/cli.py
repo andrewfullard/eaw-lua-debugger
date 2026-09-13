@@ -64,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     variable.add_argument("variable_name")
     variable.add_argument("--json", action="store_true", help="emit JSON")
 
+    execute = subparsers.add_parser("execute", help="execute text in a script context")
+    _add_connection_args(execute)
+    execute.add_argument("script_id", type=int)
+    execute.add_argument("text")
+
     session = subparsers.add_parser("session", help="connect and service a diagnostic session")
     _add_connection_args(session)
     session.add_argument("--script-id", type=int, default=None)
@@ -177,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             ) as client:
                 server_name = client.connect()
                 client.send_control(args.control_command)
+                client.flush()
             print(f"Sent {args.control_command} to {server_name}")
             return 0
 
@@ -204,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
                         args.source_name,
                         args.line_number,
                     )
+                client.flush()
             print(f"{args.action} breakpoint sent to {server_name}")
             return 0
 
@@ -221,6 +228,20 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({"server_name": server_name, **value.__dict__}, indent=2))
             else:
                 print(f"{value.variable_name}\t{value.value_type}\t{value.value_text}")
+            return 0
+
+        if args.command == "execute":
+            with LuaDebuggerClient(
+                args.host,
+                args.port,
+                local_port=args.local_port,
+                client_name=args.client_name,
+                timeout=args.timeout,
+            ) as client:
+                server_name = client.connect()
+                result_text = client.execute_text(args.script_id, args.text)
+            print(f"Connected to {server_name}")
+            print(result_text)
             return 0
 
         if args.command == "session":
