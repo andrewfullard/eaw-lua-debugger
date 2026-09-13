@@ -55,6 +55,7 @@ dependencies = [
 
 [package.optional-dependencies]
 gui = [
+    { name = "pygments" },
     { name = "pyside6" },
 ]
 
@@ -67,6 +68,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bitarray", specifier = ">=3.11.0" },
+    { name = "pygments", marker = "extra == 'gui'", specifier = ">=2.19.0" },
     { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6.10.0" },
 ]
 provides-extras = ["gui"]

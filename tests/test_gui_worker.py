@@ -32,4 +32,19 @@ def test_gui_loading_a_script_does_not_send_context_or_break_commands():
 
     worker.load_script(7)
 
-    assert client.calls == [("attach_script", 7), ("request_threads", 7)]
+    assert client.calls == [("request_threads", 7)]
+
+
+def test_gui_worker_reports_backend_timeout_without_traceback():
+    class TimeoutClient(FakeClient):
+        def request_threads(self, script_id):
+            raise TimeoutError("boom")
+
+    worker = gui.DebuggerWorker()
+    worker.client = TimeoutClient()
+    errors = []
+    worker.error.connect(errors.append)
+
+    worker.load_script(7)
+
+    assert errors == ["boom"]

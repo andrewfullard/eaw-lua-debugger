@@ -50,13 +50,20 @@ The window connects through the same backend as the CLI and exposes the debugger
 state through tabs matching the native tool shape:
 
 - Files, Call Stack, and Threads
+- line-numbered Lua source tabs with Pygments syntax highlighting
+- double-click source lines to add/remove breakpoints
 - Debug Output, Variables, Lua Console, Breakpoints, Parse Errors, and Find In Files
 
 Connection options are available as command-line arguments:
 
 ```powershell
-uv run --extra gui eaw-lua-debugger-gui --host 127.0.0.1 --port 1234 --local-port 1247
+uv run --extra gui eaw-lua-debugger-gui --host 127.0.0.1 --port 1234 --local-port 1247 --source-root "G:\SteamLibrary\steamapps\common\Star Wars Empire at War\corruption"
 ```
+
+`--source-root` may be passed more than once. The GUI tries to match
+game-reported paths directly and by common suffixes such as `Data/Scripts/...`.
+You can also set `EAW_LUA_SOURCE_ROOT` to one or more roots separated by the
+platform path separator.
 
 When the GUI or CLI exits normally, it sends Lua debugger `GOODBYE` and flushes
 the reliable ACK so the same local endpoint can be reused.

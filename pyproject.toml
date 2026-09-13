@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = [
+    "Pygments>=2.19.0",
     "PySide6>=6.10.0",
 ]
 
