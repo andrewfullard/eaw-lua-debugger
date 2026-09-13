@@ -143,14 +143,26 @@ def execute_text(script_id: int, text: str) -> BitBuffer:
 
 
 def parse_lua_message(payload: BitBuffer) -> LuaMessage:
-    reader = payload.reader()
-    magic = reader.read_bits(4)
-    if magic != LUA_DEBUGGER_MAGIC:
-        raise ProtocolError(f"unexpected Lua debugger packet magic 0x{magic:x}")
-
+    reader = _reader_after_magic(payload)
     message_id = reader.read_u32()
     fields = _parse_fields(message_id, reader)
     return LuaMessage(message_id=message_id, fields=fields, raw_payload=payload)
+
+
+def _reader_after_magic(payload: BitBuffer) -> BitReader:
+    reader = payload.reader()
+    magic = reader.read_bits(4)
+    if magic == LUA_DEBUGGER_MAGIC:
+        return reader
+
+    if payload.bit_count >= 61:
+        prefix = payload.reader()
+        if prefix.read_bits(57) == 0:
+            shifted = BitReader(payload.data, payload.bit_count - 57, bit_offset=57)
+            if shifted.read_bits(4) == LUA_DEBUGGER_MAGIC:
+                return shifted
+
+    raise ProtocolError(f"unexpected Lua debugger packet magic 0x{magic:x}")
 
 
 def _parse_thread_pairs(reader: BitReader) -> list[dict[str, Any]]:

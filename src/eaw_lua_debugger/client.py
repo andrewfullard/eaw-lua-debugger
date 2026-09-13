@@ -8,12 +8,15 @@ import time
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
+from logging import getLogger
 
 from .bitstream import BitBuffer
 from .exceptions import Timeout
 from .lua_messages import LuaMessage, LuaMessageId, encode_lua_message, parse_lua_message
-from .pgnet import build_connect_request, decode_datagram, parse_connect_response
+from .pgnet import PacketKind, build_connect_request, decode_datagram, parse_connect_response
 from .reliable import ReliableState
+
+log = getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,7 @@ class LuaDebuggerClient:
         sock.bind(("0.0.0.0", self.local_port))
         sock.settimeout(0.1)
         self.socket = sock
+        log.info("bound UDP %s -> %s", sock.getsockname(), self.remote)
 
     def close(self) -> None:
         if self.socket is not None:
@@ -69,6 +73,7 @@ class LuaDebuggerClient:
 
         self.open()
         assert self.socket is not None
+        log.info("sending PGNet connect request as %s", self.client_name)
         self.socket.sendto(build_connect_request(self.client_name), self.remote)
         deadline = time.monotonic() + self.timeout
         while time.monotonic() < deadline:
@@ -77,19 +82,39 @@ class LuaDebuggerClient:
             except TimeoutError:
                 continue
             if address != self.remote:
+                log.debug("ignoring datagram from unexpected endpoint %s", address)
                 continue
+            packet = decode_datagram(datagram)
             self.server_name = parse_connect_response(datagram)
+            log.info(
+                "received Spoot from %s via packet id=%s kind=%s",
+                self.server_name,
+                packet.packet_id,
+                packet.kind.name,
+            )
+            if packet.kind == PacketKind.GUARANTEED:
+                for outbound in self.reliable.process_packet(packet).outbound:
+                    log.debug("sending ACK/NACK for Spoot packet")
+                    self.socket.sendto(outbound, self.remote)
             self.send_lua(LuaMessageId.HELLO)
             self.wait_for(LuaMessageId.HELLO, deadline=deadline)
+            log.info("Lua debugger hello completed")
             return self.server_name
         raise Timeout("timed out waiting for PGNet Spoot response")
 
     def send_lua(self, message_id: int | LuaMessageId, *fields: int | str | list[int]) -> None:
+        log.info("sending Lua message id=%s", int(message_id))
         self.send_payload(encode_lua_message(message_id, *fields))
 
     def send_payload(self, payload: BitBuffer) -> None:
         assert self.socket is not None
         for datagram in self.reliable.make_guaranteed_packets(payload):
+            packet = decode_datagram(datagram)
+            log.debug(
+                "sending reliable packet id=%s bytes=%s",
+                packet.packet_id,
+                len(datagram),
+            )
             self.socket.sendto(datagram, self.remote)
 
     def service_once(self) -> list[LuaMessage]:
@@ -97,6 +122,7 @@ class LuaDebuggerClient:
 
         assert self.socket is not None
         for datagram in self.reliable.due_resends():
+            log.warning("resending reliable datagram bytes=%s", len(datagram))
             self.socket.sendto(datagram, self.remote)
 
         try:
@@ -104,16 +130,40 @@ class LuaDebuggerClient:
         except TimeoutError:
             return []
         if address != self.remote:
+            log.debug("ignoring datagram from unexpected endpoint %s", address)
             return []
 
         packet = decode_datagram(datagram)
+        log.debug(
+            "received packet id=%s kind=%s resend=%s bytes=%s",
+            packet.packet_id,
+            packet.kind.name,
+            packet.resend,
+            len(datagram),
+        )
         result = self.reliable.process_packet(packet)
-        for outbound in result.outbound:
+        for outbound in result.acks:
+            ack = decode_datagram(outbound)
+            log.debug("sending ACK id=%s", ack.packet_id)
+            self.socket.sendto(outbound, self.remote)
+        for outbound in result.nacks:
+            nack = decode_datagram(outbound)
+            log.warning("sending NACK id=%s", nack.packet_id)
+            self.socket.sendto(outbound, self.remote)
+        for outbound in result.resends:
+            resend = decode_datagram(outbound)
+            log.warning("resending packet id=%s", resend.packet_id)
             self.socket.sendto(outbound, self.remote)
 
         messages = []
         for payload in result.deliveries:
+            log.debug(
+                "parsing Lua payload bytes=%s first=%s",
+                len(payload.data),
+                payload.data[:16].hex(),
+            )
             message = parse_lua_message(payload)
+            log.info("received Lua message id=%s name=%s", message.message_id, message.name)
             self.messages.append(message)
             messages.append(message)
         return messages

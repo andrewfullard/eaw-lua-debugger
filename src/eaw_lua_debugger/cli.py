@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 
 from .client import LuaDebuggerClient
@@ -26,6 +27,7 @@ def _add_connection_args(parser: argparse.ArgumentParser) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="eaw-lua-debugger")
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="show protocol progress")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scripts = subparsers.add_parser("scripts", help="connect and print the active script list")
@@ -39,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     parse.add_argument("hex_datagram", help="raw UDP response as hexadecimal")
 
     args = parser.parse_args(argv)
+    _configure_logging(getattr(args, "verbose", 0))
 
     try:
         if args.command == "hello-bytes":
@@ -81,6 +84,15 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error("unknown command")
     return 2
+
+
+def _configure_logging(verbosity: int) -> None:
+    if verbosity <= 0:
+        logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+    elif verbosity == 1:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    else:
+        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
 
 
 if __name__ == "__main__":

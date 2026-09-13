@@ -127,6 +127,17 @@ def test_inner_lua_packet_encoding_starts_with_four_bit_magic_then_message_id():
     assert reader.read_bits(32) == 0x1234
 
 
+def test_lua_parser_accepts_large_packet_payload_with_embedded_pgnet_header():
+    writer = eld.BitWriter()
+    writer.write_bits(0, 57)
+    writer.write_buffer(eld.encode_lua_message(1))
+
+    message = eld.parse_lua_message(writer.buffer())
+
+    assert message.message_id == 1
+    assert message.name == "HELLO"
+
+
 def test_guaranteed_lua_packet_and_ack_header_shape_match_known_vectors():
     lua_hello = eld.encode_lua_message(1)
     guaranteed = eld.encode_datagram(

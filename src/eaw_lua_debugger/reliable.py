@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from logging import getLogger
 
 from .bitstream import BitBuffer, BitWriter
 from .exceptions import ProtocolError
@@ -20,6 +21,7 @@ from .pgnet import (
 ID_MODULUS = MAX_PACKET_ID + 1
 DIRECT_SEND_THRESHOLD = 0x495
 CHUNK_DATA_SIZE = DIRECT_SEND_THRESHOLD - 6
+log = getLogger(__name__)
 
 
 @dataclass
@@ -164,6 +166,12 @@ class ReliableState:
             last_chunk_packet_id = reader.read_u32()
             original_payload_write_size_bytes = reader.read_u32()
             original_payload_bit_count = reader.read_u32()
+            log.info(
+                "large-packet descriptor last_chunk=%s bytes=%s bits=%s",
+                last_chunk_packet_id,
+                original_payload_write_size_bytes,
+                original_payload_bit_count,
+            )
             if original_payload_write_size_bytes != (original_payload_bit_count + 7) // 8:
                 raise ProtocolError("large-packet descriptor byte size does not match bit count")
             self._large_sequence = LargeSequence(
@@ -179,7 +187,14 @@ class ReliableState:
         chunk_bits = reader.remaining_bits - 7
         if chunk_bits < 0 or chunk_bits % 8:
             raise ProtocolError("large-packet chunk is not byte-aligned")
-        self._large_sequence.chunks.append(reader.read_buffer(chunk_bits))
+        chunk = reader.read_buffer(chunk_bits)
+        log.debug(
+            "large-packet chunk packet=%s bytes=%s first=%s",
+            packet_id,
+            len(chunk.data),
+            chunk.data[:8].hex(),
+        )
+        self._large_sequence.chunks.append(chunk)
         if packet_id != self._large_sequence.last_chunk_packet_id:
             return None
 
@@ -190,5 +205,11 @@ class ReliableState:
         if len(assembled_bytes.data) != self._large_sequence.original_payload_write_size_bytes:
             raise ProtocolError("large-packet chunks do not match descriptor byte size")
         assembled = assembled_bytes.trim(self._large_sequence.original_payload_bit_count)
+        log.info(
+            "large-packet assembled bytes=%s bits=%s first=%s",
+            len(assembled.data),
+            assembled.bit_count,
+            assembled.data[:16].hex(),
+        )
         self._large_sequence = None
         return assembled
