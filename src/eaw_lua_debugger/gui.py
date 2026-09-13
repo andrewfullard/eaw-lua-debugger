@@ -408,7 +408,7 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         form = QFormLayout()
-        self.bp_script = QSpinBox(maximum=0x7FFFFFFF)
+        self.bp_script = QSpinBox(minimum=-0x7FFFFFFF, maximum=0x7FFFFFFF)
         self.bp_thread = QSpinBox(maximum=0x7FFFFFFF)
         self.bp_source = QLineEdit()
         self.bp_line = QSpinBox(maximum=1_000_000)
@@ -518,17 +518,21 @@ class MainWindow(QMainWindow):
     def _add_breakpoint(self) -> None:
         spec = self._breakpoint_spec()
         self.state.add_breakpoint(spec)
-        self.add_breakpoint_requested.emit(spec)
+        if self._can_send_breakpoint(spec):
+            self.add_breakpoint_requested.emit(spec)
         self._render_breakpoints()
         self._render_source_breakpoints(spec.script_id)
-        self.output.appendPlainText(f"\u25cf {spec.source_name} - Line: {spec.line_number}")
 
     def _remove_breakpoint(self) -> None:
         spec = self._breakpoint_spec()
         self.state.remove_breakpoint(spec)
-        self.remove_breakpoint_requested.emit(spec)
+        if self._can_send_breakpoint(spec):
+            self.remove_breakpoint_requested.emit(spec)
         self._render_breakpoints()
         self._render_source_breakpoints(spec.script_id)
+
+    def _can_send_breakpoint(self, spec: BreakpointSpec) -> bool:
+        return spec.script_id >= 0
 
     def _breakpoint_spec(self) -> BreakpointSpec:
         script_id = self.bp_script.value()
@@ -558,6 +562,7 @@ class MainWindow(QMainWindow):
             self.source_tabs.addTab(editor, title)
         self._render_source_breakpoints(script.script_id)
         self.source_tabs.setCurrentWidget(editor)
+        self.bp_script.setValue(script.script_id)
         self.bp_source.setText(script.full_path_name)
 
     def _open_file(self) -> None:
@@ -677,7 +682,8 @@ class MainWindow(QMainWindow):
     def _delete_all_breakpoints(self) -> None:
         for spec in list(self.state.breakpoints):
             self.state.remove_breakpoint(spec)
-            self.remove_breakpoint_requested.emit(spec)
+            if self._can_send_breakpoint(spec):
+                self.remove_breakpoint_requested.emit(spec)
             self._render_source_breakpoints(spec.script_id)
         self._render_breakpoints()
 
