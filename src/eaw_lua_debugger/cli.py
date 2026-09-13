@@ -49,6 +49,15 @@ def main(argv: list[str] | None = None) -> int:
     _add_connection_args(control)
     control.add_argument("control_command", choices=sorted(CONTROL_MESSAGES))
 
+    breakpoint = subparsers.add_parser("breakpoint", help="add or remove a breakpoint")
+    _add_connection_args(breakpoint)
+    breakpoint.add_argument("action", choices=["add", "remove"])
+    breakpoint.add_argument("script_id", type=int)
+    breakpoint.add_argument("thread_id", type=int)
+    breakpoint.add_argument("source_name")
+    breakpoint.add_argument("line_number", type=int)
+    breakpoint.add_argument("--condition", default="")
+
     session = subparsers.add_parser("session", help="connect and service a diagnostic session")
     _add_connection_args(session)
     session.add_argument("--script-id", type=int, default=None)
@@ -163,6 +172,33 @@ def main(argv: list[str] | None = None) -> int:
                 server_name = client.connect()
                 client.send_control(args.control_command)
             print(f"Sent {args.control_command} to {server_name}")
+            return 0
+
+        if args.command == "breakpoint":
+            with LuaDebuggerClient(
+                args.host,
+                args.port,
+                local_port=args.local_port,
+                client_name=args.client_name,
+                timeout=args.timeout,
+            ) as client:
+                server_name = client.connect()
+                if args.action == "add":
+                    client.add_breakpoint(
+                        args.script_id,
+                        args.thread_id,
+                        args.source_name,
+                        args.line_number,
+                        args.condition,
+                    )
+                else:
+                    client.remove_breakpoint(
+                        args.script_id,
+                        args.thread_id,
+                        args.source_name,
+                        args.line_number,
+                    )
+            print(f"{args.action} breakpoint sent to {server_name}")
             return 0
 
         if args.command == "session":

@@ -230,6 +230,38 @@ class LuaDebuggerClient:
             raise ValueError(f"unknown control command {command!r}") from exc
         self.send_lua(message_id)
 
+    def add_breakpoint(
+        self,
+        script_id: int,
+        thread_id: int,
+        source_name: str,
+        line_number: int,
+        condition: str = "",
+    ) -> None:
+        self.send_lua(
+            LuaMessageId.ADD_BREAKPOINT,
+            script_id,
+            thread_id,
+            source_name,
+            line_number,
+            condition,
+        )
+
+    def remove_breakpoint(
+        self,
+        script_id: int,
+        thread_id: int,
+        source_name: str,
+        line_number: int,
+    ) -> None:
+        self.send_lua(
+            LuaMessageId.REMOVE_BREAKPOINT,
+            script_id,
+            thread_id,
+            source_name,
+            line_number,
+        )
+
     def iter_messages(self, *, timeout: float | None = None) -> Iterable[LuaMessage]:
         deadline = None if timeout is None else time.monotonic() + timeout
         while deadline is None or time.monotonic() < deadline:
