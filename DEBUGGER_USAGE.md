@@ -88,6 +88,8 @@ or path to filter the list, then double-click a result or choose **OK**.
 Closes the current source tab or all source tabs. This does not unload scripts
 from the game and does not delete breakpoints.
 
+Right-click a source tab for **Close**, **Close Others**, or **Close All**.
+
 ### Save
 
 Writes changes in the current source tab to its existing local file. If the

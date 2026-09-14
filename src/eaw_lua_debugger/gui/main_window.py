@@ -29,6 +29,7 @@ try:
         QLineEdit,
         QListWidget,
         QMainWindow,
+        QMenu,
         QMessageBox,
         QPlainTextEdit,
         QPushButton,
@@ -265,6 +266,12 @@ class MainWindow(QMainWindow):
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
         self.top_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.source_tabs = QTabWidget()
+        self.source_tabs.setTabsClosable(True)
+        self.source_tabs.tabCloseRequested.connect(self._close_source_tab)
+        self.source_tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.source_tabs.tabBar().customContextMenuRequested.connect(
+            self._source_tab_context_menu
+        )
         self.source_tabs.setMinimumWidth(560)
         self.source_tabs.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -975,8 +982,8 @@ class MainWindow(QMainWindow):
         widget = self.source_tabs.currentWidget()
         return widget if isinstance(widget, SourceEditor) else None
 
-    def _close_source_tab(self) -> None:
-        index = self.source_tabs.currentIndex()
+    def _close_source_tab(self, index: int | None = None) -> None:
+        index = self.source_tabs.currentIndex() if index is None else index
         if index < 0:
             return
         widget = self.source_tabs.widget(index)
@@ -992,6 +999,23 @@ class MainWindow(QMainWindow):
         self.source_tabs.clear()
         self.source_editors.clear()
         self.frame_source_editors.clear()
+
+    def _close_other_source_tabs(self, index: int) -> None:
+        for tab_index in range(self.source_tabs.count() - 1, -1, -1):
+            if tab_index != index:
+                self._close_source_tab(tab_index)
+
+    def _source_tab_context_menu(self, position) -> None:
+        tab_bar = self.source_tabs.tabBar()
+        index = tab_bar.tabAt(position)
+        if index < 0:
+            return
+        self.source_tabs.setCurrentIndex(index)
+        menu = QMenu(self)
+        menu.addAction("Close", lambda: self._close_source_tab(index))
+        menu.addAction("Close Others", lambda: self._close_other_source_tabs(index))
+        menu.addAction("Close All", self._close_all_source_tabs)
+        menu.exec(tab_bar.mapToGlobal(position))
 
     def _save_source(self) -> None:
         editor = self._current_editor()
