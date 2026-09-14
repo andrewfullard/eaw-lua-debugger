@@ -110,6 +110,7 @@ class MainWindow(QMainWindow):
         self.args = args
         self.state = DebuggerState()
         self.source_roots = source_roots(getattr(args, "source_root", []))
+        self._smart_open_cache: tuple[tuple[Path, ...], list[Path]] | None = None
         self.source_editors: dict[int, SourceEditor] = {}
         self.frame_source_editors: dict[tuple[int, str], SourceEditor] = {}
         self._file_items: dict[int, QTreeWidgetItem] = {}
@@ -929,6 +930,7 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.source_roots = source_roots([*(str(root) for root in self.source_roots), path])
+            self._smart_open_cache = None
             self.statusBar().showMessage(f"Added source root: {path}")
 
     def _list_source_roots(self) -> None:
@@ -952,10 +954,14 @@ class MainWindow(QMainWindow):
         row = roots.currentRow()
         if row >= 0:
             self.source_roots.pop(row)
+            self._smart_open_cache = None
             roots.takeItem(row)
 
     def _smart_open(self) -> None:
-        dialog = SmartOpenDialog(find_lua_files(self.source_roots), self)
+        cache_key = tuple(self.source_roots)
+        if self._smart_open_cache is None or self._smart_open_cache[0] != cache_key:
+            self._smart_open_cache = (cache_key, find_lua_files(self.source_roots))
+        dialog = SmartOpenDialog(self._smart_open_cache[1], self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_path:
             self._open_local_path(dialog.selected_path)
 

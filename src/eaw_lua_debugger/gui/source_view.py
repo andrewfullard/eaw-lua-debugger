@@ -20,6 +20,7 @@ try:
         QTextFormat,
     )
     from PySide6.QtWidgets import (
+        QAbstractItemView,
         QDialog,
         QDialogButtonBox,
         QLineEdit,
@@ -152,6 +153,8 @@ class SmartOpenDialog(QDialog):
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Name", "Path"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.cellDoubleClicked.connect(lambda _row, _col: self.accept())
         layout.addWidget(self.table)
         self.filter_text = QLineEdit()
@@ -177,9 +180,9 @@ class SmartOpenDialog(QDialog):
             self.table.selectRow(0)
 
     def accept(self) -> None:
-        selected = self.table.selectedItems()
-        if selected:
-            self.selected_path = selected[1].text()
+        row = self.table.currentRow()
+        if row >= 0 and self.table.item(row, 1) is not None:
+            self.selected_path = self.table.item(row, 1).text()
         super().accept()
 
 
