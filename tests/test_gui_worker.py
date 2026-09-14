@@ -438,7 +438,9 @@ def test_breakpoint_render_preserves_editor_position_and_view(tmp_path):
         app.processEvents()
 
 
-def test_global_breakpoint_uses_native_sentinels_and_delete_clears_gutter(tmp_path):
+def test_global_breakpoint_uses_native_sentinels_and_delete_clears_gutter(
+    tmp_path, monkeypatch
+):
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "Foo.lua"
     source.write_text("a\nb\n", encoding="utf-8")
@@ -455,6 +457,11 @@ def test_global_breakpoint_uses_native_sentinels_and_delete_clears_gutter(tmp_pa
     sent = []
     window.add_breakpoint_requested.connect(sent.append)
     try:
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+        )
         script = ScriptInfo(7, str(source))
         window.state.scripts[7] = script
         window._open_source(script)

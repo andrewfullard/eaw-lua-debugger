@@ -1112,6 +1112,15 @@ class MainWindow(QMainWindow):
         self._render_source_breakpoints(script_id)
 
     def _delete_all_breakpoints(self) -> None:
+        choice = QMessageBox.warning(
+            self,
+            "Delete all breakpoints?",
+            "Are you sure you want to delete all breakpoints?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            return
         for spec in list(self.state.breakpoints):
             if spec not in self.state.breakpoints:
                 continue
