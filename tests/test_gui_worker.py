@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -1249,4 +1251,39 @@ def test_local_source_breakpoints_replay_when_matching_game_script_loads(tmp_pat
         assert "game-reported source" in window.statusBar().currentMessage()
     finally:
         window.close()
+        app.processEvents()
+
+
+def test_breakpoints_persist_between_gui_sessions(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "Persisted.lua"
+    source.write_text("a\n", encoding="utf-8")
+    breakpoint_file = tmp_path / "breakpoints.json"
+    args = argparse.Namespace(
+        host="127.0.0.1",
+        port=1234,
+        local_port=0,
+        client_name=None,
+        timeout=5.0,
+        source_root=[str(tmp_path)],
+        breakpoint_file=str(breakpoint_file),
+    )
+    first = MainWindow(args)
+    try:
+        first._open_local_path(str(source))
+        first._toggle_source_breakpoint(first._current_editor().source.script.script_id, 1)
+        assert json.loads(breakpoint_file.read_text(encoding="utf-8"))[0]["source_name"] == str(
+            source
+        )
+    finally:
+        first.close()
+        app.processEvents()
+
+    second = MainWindow(args)
+    try:
+        assert second.state.breakpoints == [BreakpointSpec(-2, -1, str(source), 1)]
+        second._scripts_loaded([ScriptInfo(7, str(source))])
+        assert second.state.breakpoints == [BreakpointSpec(7, -1, str(source), 1)]
+    finally:
+        second.close()
         app.processEvents()

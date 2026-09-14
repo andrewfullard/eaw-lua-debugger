@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 try:
     from PySide6.QtGui import QIcon
@@ -21,6 +22,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--local-port", type=int, default=0)
     parser.add_argument("--client-name", default=None)
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument(
+        "--breakpoint-file",
+        default=str(Path.home() / ".eaw_lua_debugger_breakpoints.json"),
+        help="file used to persist GUI breakpoints",
+    )
     parser.add_argument(
         "--source-root",
         action="append",

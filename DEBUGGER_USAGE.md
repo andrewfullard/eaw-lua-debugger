@@ -79,6 +79,10 @@ Opens a local `.lua` file by path. Breakpoints added to a local-only file are
 remembered and sent automatically after connecting when exactly one live game
 script has the same source name. They remain pending if no unique match exists.
 
+The GUI saves the current breakpoint list to
+`~/.eaw_lua_debugger_breakpoints.json` and loads it when the next session
+starts. Use `--breakpoint-file` to choose another file.
+
 ### Smart open
 
 Lists the `.lua` files beneath the configured source roots. Type part of a name

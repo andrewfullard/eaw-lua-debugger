@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -110,6 +111,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.args = args
         self.state = DebuggerState()
+        breakpoint_file = getattr(args, "breakpoint_file", None)
+        self.breakpoint_file = Path(breakpoint_file) if breakpoint_file else None
         self.source_roots = source_roots(getattr(args, "source_root", []))
         self._smart_open_cache: tuple[tuple[Path, ...], list[Path]] | None = None
         self.source_editors: dict[int, SourceEditor] = {}
@@ -138,6 +141,7 @@ class MainWindow(QMainWindow):
         self.thread_poll_timer.setInterval(5000)
         self.thread_poll_timer.timeout.connect(self._poll_threads)
         self.thread_poll_timer.start()
+        self._load_breakpoints()
 
     def _build_worker(self) -> None:
         self.thread = QThread(self)
@@ -777,6 +781,7 @@ class MainWindow(QMainWindow):
 
     def _add_breakpoint(self, spec: BreakpointSpec) -> None:
         self.state.add_breakpoint(spec)
+        self._save_breakpoints()
         if self._can_send_breakpoint(spec):
             self.add_breakpoint_requested.emit(spec)
         else:
@@ -786,6 +791,7 @@ class MainWindow(QMainWindow):
 
     def _remove_breakpoint(self, spec: BreakpointSpec) -> None:
         self.state.remove_breakpoint(spec)
+        self._save_breakpoints()
         live_keys = {_breakpoint_key(breakpoint) for breakpoint in self.state.breakpoints}
         self._breakpoints_to_replay.intersection_update(live_keys)
         if self._can_send_breakpoint(spec):
@@ -1112,6 +1118,7 @@ class MainWindow(QMainWindow):
             if self._can_send_breakpoint(spec):
                 self.remove_breakpoint_requested.emit(spec)
             self.state.remove_breakpoint(spec)
+        self._save_breakpoints()
         self._breakpoints_to_replay.clear()
         script_ids = set(self.source_editors)
         script_ids.update(key[0] for key in self.frame_source_editors)
@@ -1212,11 +1219,64 @@ class MainWindow(QMainWindow):
             for col, value in enumerate(values):
                 self.breakpoints.setItem(row, col, QTableWidgetItem(str(value)))
 
+    def _load_breakpoints(self) -> None:
+        if self.breakpoint_file is None or not self.breakpoint_file.is_file():
+            return
+        try:
+            records = json.loads(self.breakpoint_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(records, list):
+            return
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            script_id = record.get("script_id", -2)
+            if not isinstance(script_id, int) or script_id < -1:
+                script_id = -2
+            thread_id = record.get("thread_id", -1)
+            source_name = record.get("source_name", "")
+            line_number = record.get("line_number", 0)
+            condition = record.get("condition", "")
+            if not (
+                isinstance(thread_id, int)
+                and isinstance(source_name, str)
+                and source_name
+                and isinstance(line_number, int)
+                and line_number > 0
+                and isinstance(condition, str)
+            ):
+                continue
+            spec = BreakpointSpec(
+                script_id,
+                thread_id,
+                source_name,
+                line_number,
+                condition,
+            )
+            self.state.add_breakpoint(spec)
+            self._breakpoints_to_replay.add(_breakpoint_key(spec))
+        self._render_breakpoints()
+
+    def _save_breakpoints(self) -> None:
+        if self.breakpoint_file is None:
+            return
+        records = [spec.__dict__ for spec in self.state.breakpoints]
+        try:
+            self.breakpoint_file.parent.mkdir(parents=True, exist_ok=True)
+            self.breakpoint_file.write_text(
+                json.dumps(records, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            return
+
     def _error(self, message: str) -> None:
         self.statusBar().showMessage(f"Error: {message}")
         QMessageBox.warning(self, "EAWLuaDebugger", message)
 
     def closeEvent(self, event) -> None:
+        self._save_breakpoints()
         self.timer.stop()
         self.thread_poll_timer.stop()
         QMetaObject.invokeMethod(
