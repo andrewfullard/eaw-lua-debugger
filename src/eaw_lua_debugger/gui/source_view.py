@@ -11,7 +11,14 @@ try:
     from pygments.lexers import LuaLexer
     from pygments.token import Comment, Keyword, Literal, Name, Number, String
     from PySide6.QtCore import Signal
-    from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat, QTextCursor
+    from PySide6.QtGui import (
+        QColor,
+        QFont,
+        QSyntaxHighlighter,
+        QTextCharFormat,
+        QTextCursor,
+        QTextFormat,
+    )
     from PySide6.QtWidgets import (
         QDialog,
         QDialogButtonBox,
@@ -19,6 +26,7 @@ try:
         QPlainTextEdit,
         QTableWidget,
         QTableWidgetItem,
+        QTextEdit,
         QVBoxLayout,
         QWidget,
     )
@@ -73,6 +81,7 @@ class SourceEditor(QPlainTextEdit):
         super().__init__()
         self.source = source
         self.breakpoint_lines: set[int] = set()
+        self.active_line: int | None = None
         self.setReadOnly(False)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.setFont(QFont("Consolas", 10))
@@ -95,10 +104,28 @@ class SourceEditor(QPlainTextEdit):
         self.setTextCursor(cursor)
         self.verticalScrollBar().setValue(vertical_scroll)
         self.horizontalScrollBar().setValue(horizontal_scroll)
+        self.set_active_line(self.active_line, navigate=False)
 
     def set_breakpoints(self, lines: set[int]) -> None:
         self.breakpoint_lines = lines
         self.render()
+
+    def set_active_line(self, line: int | None, *, navigate: bool = True) -> None:
+        self.active_line = line
+        self.setExtraSelections([])
+        if line is None:
+            return
+        block = self.document().findBlockByNumber(line - 1)
+        if not block.isValid():
+            return
+        selection = QTextEdit.ExtraSelection()
+        selection.cursor = QTextCursor(block)
+        selection.format.setBackground(QColor(255, 215, 0, 80))
+        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        self.setExtraSelections([selection])
+        if navigate:
+            self.setTextCursor(QTextCursor(block))
+            self.centerCursor()
 
     def source_line(self) -> int:
         return self.textCursor().blockNumber() + 1

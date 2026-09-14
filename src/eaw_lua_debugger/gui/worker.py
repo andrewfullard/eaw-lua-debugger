@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..core.exceptions import ConnectionLost
+from ..core.exceptions import ConnectionLost, InvalidDebuggerState
 from ..debugger.client import LuaDebuggerClient
 from ..protocol.lua_messages import LuaMessageId
 from .state import BreakpointSpec
@@ -27,6 +27,7 @@ class DebuggerWorker(QObject):
     debug_state_changed = Signal(str)
     feedback = Signal(str)
     callstack_frame_selected = Signal(int, int)
+    thread_poll_finished = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -80,12 +81,7 @@ class DebuggerWorker(QObject):
             if messages:
                 self.debug_state_changed.emit(self.client.run_state.value)
         except ConnectionLost as exc:
-            self.client.abort()
-            self.client = None
-            self.current_script_id = None
-            self.debug_state_changed.emit("disconnected")
-            self.disconnected.emit()
-            self.error.emit(str(exc))
+            self._connection_lost(exc)
         except Exception as exc:  # noqa: BLE001
             self._report_error(exc)
 
@@ -97,6 +93,24 @@ class DebuggerWorker(QObject):
             self.scripts_loaded.emit(self.client.request_scripts())
         except Exception as exc:  # noqa: BLE001
             self._report_error(exc)
+
+    @Slot(object)
+    def poll_threads(self, script_ids: object) -> None:
+        try:
+            if self.client is None:
+                return
+            for script_id in script_ids:
+                try:
+                    threads = self.client.request_threads(script_id)
+                except InvalidDebuggerState:
+                    continue
+                self.threads_loaded.emit(script_id, threads)
+        except ConnectionLost as exc:
+            self._connection_lost(exc)
+        except Exception as exc:  # noqa: BLE001
+            self._report_error(exc)
+        finally:
+            self.thread_poll_finished.emit()
 
     @Slot(int)
     def load_script(self, script_id: int) -> None:
@@ -240,4 +254,13 @@ class DebuggerWorker(QObject):
     def _report_error(self, exc: Exception) -> None:
         if self.client is not None:
             self.debug_state_changed.emit(self.client.run_state.value)
+        self.error.emit(str(exc))
+
+    def _connection_lost(self, exc: ConnectionLost) -> None:
+        assert self.client is not None
+        self.client.abort()
+        self.client = None
+        self.current_script_id = None
+        self.debug_state_changed.emit("disconnected")
+        self.disconnected.emit()
         self.error.emit(str(exc))

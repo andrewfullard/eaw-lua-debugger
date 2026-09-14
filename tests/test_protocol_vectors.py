@@ -77,7 +77,7 @@ def test_strings_are_one_byte_length_prefixed_ascii_and_reject_255_bytes():
 
 
 def test_connect_request_matches_known_good_stock_debugger_vector():
-    request = eld.build_connect_request("LuaDebuggerNET:20588")
+    request = eld.build_connect_request("EAWLuaDebugger:20588")
 
     assert request == KNOWN_CONNECT_REQUEST
 
@@ -89,7 +89,7 @@ def test_connect_request_matches_known_good_stock_debugger_vector():
     payload = packet.payload.reader()
     assert payload.read_bits(32) == 0xF000F000
     assert payload.read_string() == "Yo!"
-    assert payload.read_string() == "LuaDebuggerNET:20588"
+    assert payload.read_string() == "EAWLuaDebugger:20588"
 
 
 def test_connect_response_parses_spoot_without_hard_coding_server_process_id():

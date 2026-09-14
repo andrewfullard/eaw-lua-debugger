@@ -4,8 +4,9 @@ pytest.importorskip("PySide6")
 
 import argparse
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QSizePolicy
 
 from eaw_lua_debugger.core.exceptions import ConnectionLost
 from eaw_lua_debugger.debugger.client import DebuggerRunState
@@ -95,6 +96,27 @@ def test_gui_loading_a_script_attaches_hook_without_breaking():
 
     assert client.calls == [("attach_script", 7), ("request_threads", 7)]
     assert children == [(7, [])]
+
+
+def test_gui_worker_polls_threads_without_attaching_or_selecting_scripts():
+    class PollClient(FakeClient):
+        def request_threads(self, script_id):
+            self.calls.append(("request_threads", script_id))
+            return [ThreadInfo(script_id, "main")] if script_id == 7 else []
+
+    worker = DebuggerWorker()
+    client = PollClient()
+    worker.client = client
+    loaded = []
+    finished = []
+    worker.threads_loaded.connect(lambda *args: loaded.append(args))
+    worker.thread_poll_finished.connect(lambda: finished.append(True))
+
+    worker.poll_threads([7, 8])
+
+    assert client.calls == [("request_threads", 7), ("request_threads", 8)]
+    assert loaded == [(7, [ThreadInfo(7, "main")]), (8, [])]
+    assert finished == [True]
 
 
 def test_gui_break_targets_current_attached_script():
@@ -324,8 +346,17 @@ def test_gui_layout_prioritizes_source_editor_width():
     try:
         assert window.source_tabs.minimumWidth() >= 560
         assert window.right_tabs.minimumWidth() == 220
-        assert window.right_tabs.maximumWidth() == 360
+        assert window.right_tabs.maximumWidth() > 10_000
+        assert (
+            window.right_tabs.sizePolicy().horizontalPolicy()
+            == QSizePolicy.Policy.Expanding
+        )
         assert window.top_splitter.sizes()[0] > window.top_splitter.sizes()[1]
+
+        bottom_tabs = window.main_splitter.widget(1)
+        breakpoint_tab = bottom_tabs.indexOf(window.breakpoints)
+        assert breakpoint_tab >= 0
+        assert bottom_tabs.tabText(breakpoint_tab) == "Breakpoints"
     finally:
         window.close()
         app.processEvents()
@@ -349,13 +380,11 @@ def test_gui_breakpoints_render_in_table_and_source_gutter_not_output(tmp_path):
         script = ScriptInfo(7, str(source))
         window.state.scripts[7] = script
         window._open_source(script)
-        window.bp_script.setValue(7)
-        window.bp_source.setText(str(source))
-        window.bp_line.setValue(2)
 
-        window._add_breakpoint()
+        window._add_breakpoint(BreakpointSpec(7, -1, str(source), 2))
 
         editor = window.source_editors[7]
+        assert window.source_tabs.tabText(window.source_tabs.indexOf(editor)) == "[7] Foo.lua"
         assert window.breakpoints.rowCount() == 1
         assert window.output.toPlainText() == ""
         assert editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
@@ -475,7 +504,6 @@ def test_disconnect_keeps_breakpoints_for_replay_after_goodbye(tmp_path):
         assert window.state.current_script_id is None
         assert window.state.breakpoints == [BreakpointSpec(7, -1, str(source), 1)]
         assert window.breakpoints.rowCount() == 1
-        assert 7 not in window.source_editors
     finally:
         window.close()
         app.processEvents()
@@ -797,6 +825,96 @@ def test_selecting_game_script_does_not_request_variables(tmp_path):
         app.processEvents()
 
 
+def test_five_second_thread_poll_highlights_scripts_with_threads():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    requested = []
+    window.poll_threads_requested.connect(requested.append)
+    try:
+        window.thread_poll_timer.stop()
+        window._scripts_loaded([ScriptInfo(7, "A.lua"), ScriptInfo(8, "B.lua")])
+        window.is_connected = True
+
+        window._poll_threads()
+
+        assert window.thread_poll_timer.interval() == 5000
+        assert requested == [[7, 8]]
+        assert window._thread_poll_pending is True
+
+        window._threads_loaded(7, [ThreadInfo(3, "main")])
+        active_item = window._file_items[7]
+        assert active_item.font(0).bold() is True
+        assert active_item.toolTip(1) == "1 thread(s) in latest poll"
+
+        window._threads_loaded(7, [])
+        assert active_item.font(0).bold() is False
+        assert active_item.toolTip(1) == "No named threads in latest poll"
+
+        window._thread_poll_finished()
+        assert window._thread_poll_pending is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_files_table_sorts_each_column_and_defaults_active_scripts_first():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        window.thread_poll_timer.stop()
+        window._scripts_loaded(
+            [
+                ScriptInfo(10, "Beta.lua"),
+                ScriptInfo(2, "Alpha.lua"),
+                ScriptInfo(3, "Gamma.lua"),
+            ]
+        )
+        window._threads_loaded(3, [ThreadInfo(0, "main")])
+
+        assert window.files.isSortingEnabled() is True
+        assert window.files.columnCount() == 3
+        assert window.files.topLevelItem(0).text(0) == "3"
+
+        window.files.sortItems(0, Qt.SortOrder.AscendingOrder)
+        assert [window.files.topLevelItem(row).text(0) for row in range(3)] == [
+            "2",
+            "3",
+            "10",
+        ]
+
+        window.files.sortItems(1, Qt.SortOrder.AscendingOrder)
+        assert [window.files.topLevelItem(row).text(1) for row in range(3)] == [
+            "Alpha.lua",
+            "Beta.lua",
+            "Gamma.lua",
+        ]
+
+        window.files.sortItems(2, Qt.SortOrder.DescendingOrder)
+        assert window.files.topLevelItem(0).text(0) == "3"
+        assert window.files.topLevelItem(0).text(2) == "1"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_suspended_script_does_not_request_variables():
     app = QApplication.instance() or QApplication([])
     window = MainWindow(
@@ -839,6 +957,41 @@ def test_suspended_script_does_not_request_variables():
         app.processEvents()
 
 
+def test_debug_output_appends_fragments_once_without_protocol_prefix():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        window._message_received(
+            LuaMessage(
+                LuaMessageId.OUTPUT,
+                {"output_type": 0, "message": "Lu"},
+                raw_payload=None,
+            )
+        )
+        window._message_received(LuaMessage(LuaMessageId.HEARTBEAT, {}, raw_payload=None))
+        window._message_received(
+            LuaMessage(
+                LuaMessageId.OUTPUT,
+                {"output_type": 0, "message": "a message"},
+                raw_payload=None,
+            )
+        )
+
+        assert window.output.toPlainText() == "Lua message"
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_callstack_tab_shows_selected_script_callstack():
     app = QApplication.instance() or QApplication([])
     window = MainWindow(
@@ -851,6 +1004,8 @@ def test_callstack_tab_shows_selected_script_callstack():
             source_root=[],
         )
     )
+    requested = []
+    window.callstack_requested.connect(lambda *args: requested.append(args))
     try:
         window._message_received(
             LuaMessage(
@@ -877,17 +1032,119 @@ def test_callstack_tab_shows_selected_script_callstack():
             "1",
             "Bar.lua:20",
         ]
-        assert window.callstack.currentItem() is first_frame
+        assert window.callstack.currentItem() is second_frame
+        assert requested == [(7, 1)]
 
-        window._callstack_frame_selected(7, 1)
+        window._callstack_frame_selected(7, 0)
         window._render_callstack(7)
 
-        assert window.callstack.currentItem().text(0) == "1"
+        assert window.callstack.currentItem().text(0) == "0"
 
         window.state.scripts[8] = ScriptInfo(8, "Data/Scripts/Other.lua")
         window._select_game_script(8, open_source=False, request_threads=False)
 
         assert window.callstack.topLevelItemCount() == 0
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_active_callstack_frame_highlights_and_centers_its_source_line(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "Data" / "Scripts" / "Foo.lua"
+    source.parent.mkdir(parents=True)
+    source.write_text("\n".join(f"line_{line}" for line in range(1, 201)), encoding="utf-8")
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    try:
+        window._message_received(
+            LuaMessage(
+                LuaMessageId.SCRIPT_SUSPENDED,
+                {
+                    "script_id": 7,
+                    "current_thread_id": 0,
+                    "full_path_name": "Data/Scripts/Foo.lua",
+                    "callstack": [
+                        "Data/Scripts/Foo.lua:150:CurrentFunction",
+                        "Foo.lua:25:CallingFunction",
+                    ],
+                    "threads": [],
+                },
+                raw_payload=None,
+            )
+        )
+
+        editor = window.source_editors[7]
+        assert editor.active_line == 25
+        assert editor.textCursor().blockNumber() == 24
+        assert editor.extraSelections()[0].cursor.blockNumber() == 24
+
+        window._callstack_frame_selected(7, 0)
+
+        assert editor.active_line == 150
+        assert editor.textCursor().blockNumber() == 149
+        assert editor.extraSelections()[0].cursor.blockNumber() == 149
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_callstack_library_frame_opens_local_source_in_same_script_context(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    main_source = tmp_path / "Data" / "Scripts" / "AI" / "Plan.lua"
+    library_source = tmp_path / "Data" / "Scripts" / "Library" / "PGBase.lua"
+    main_source.parent.mkdir(parents=True)
+    library_source.parent.mkdir(parents=True)
+    main_source.write_text("main = true\n", encoding="utf-8")
+    library_source.write_text(
+        "\n".join(f"line_{line}" for line in range(1, 151)), encoding="utf-8"
+    )
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    try:
+        window._message_received(
+            LuaMessage(
+                LuaMessageId.SCRIPT_SUSPENDED,
+                {
+                    "script_id": 395,
+                    "current_thread_id": 0,
+                    "full_path_name": "Data/Scripts/AI/Plan.lua",
+                    "callstack": [
+                        "Data/Scripts/AI/Plan.lua:1:Plan",
+                        "Data/Scripts/Library/PGBase.lua:84:Lua::global:BlockOnCommand",
+                    ],
+                    "threads": [],
+                },
+                raw_payload=None,
+            )
+        )
+
+        key = (395, "data/scripts/library/pgbase.lua")
+        editor = window.frame_source_editors[key]
+        assert editor.source.path == library_source
+        assert editor.active_line == 84
+        assert window.source_tabs.currentWidget() is editor
+        assert window.source_tabs.tabText(window.source_tabs.indexOf(editor)) == (
+            "[395] PGBase.lua"
+        )
+        assert window.state.current_script_id == 395
+        assert window.var_script.value() == 395
     finally:
         window.close()
         app.processEvents()

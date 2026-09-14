@@ -58,7 +58,7 @@ class LuaDebuggerClient:
     ) -> None:
         self.remote = (host, port)
         self.local_port = local_port
-        self.client_name = client_name or f"LuaDebuggerNET:{os.getpid()}"
+        self.client_name = client_name or f"EAWLuaDebugger:{os.getpid()}"
         self.timeout = timeout
         self.socket: socket.socket | None = None
         self.server_name: str | None = None
