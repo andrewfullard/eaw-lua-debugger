@@ -1,3 +1,6 @@
+import pytest
+
+from eaw_lua_debugger.core.exceptions import UnsafeOperation
 from eaw_lua_debugger.debugger.client import LuaDebuggerClient
 from eaw_lua_debugger.debugger.types import TableMember
 from eaw_lua_debugger.protocol.bitstream import BitWriter
@@ -29,6 +32,7 @@ def test_parse_table_dump_response():
 def test_client_dump_table_sends_request_and_matches_context_or_request_id():
     sent = []
     client = LuaDebuggerClient()
+    client.known_script_ids.add(9)
     client.send_lua = lambda *args: sent.append(args)
     client.messages.extend(
         [
@@ -58,7 +62,12 @@ def test_client_dump_table_sends_request_and_matches_context_or_request_id():
         ]
     )
 
-    assert client.dump_table(9, 77, "Root", [1, 2]) == [
+    assert client.dump_table(9, 77, "Root", [1, 2], allow_unsafe=True) == [
         TableMember(4, "key", 5, "value")
     ]
     assert sent == [(LuaMessageId.DUMP_TABLE, 9, 77, "Root", 2, [1, 2])]
+
+
+def test_client_rejects_raw_table_dump_without_explicit_opt_in():
+    with pytest.raises(UnsafeOperation, match="255-byte"):
+        LuaDebuggerClient().dump_table(9, 77, "_G")

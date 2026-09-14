@@ -25,6 +25,22 @@ class BreakpointSpec:
             and self.line_number == other.line_number
         )
 
+    def matches_native_remove(self, request: BreakpointSpec) -> bool:
+        return (
+            self.source_name == request.source_name
+            and self.line_number == request.line_number
+            and (
+                self.script_id == -1
+                or request.script_id == -1
+                or self.script_id == request.script_id
+            )
+            and (
+                self.thread_id == -1
+                or request.thread_id == -1
+                or self.thread_id == request.thread_id
+            )
+        )
+
 
 @dataclass
 class DebuggerState:
@@ -43,6 +59,7 @@ class DebuggerState:
     console_results: list[str] = field(default_factory=list)
     current_script_id: int | None = None
     current_thread_id: int | None = None
+    suspended_script_id: int | None = None
 
     def set_scripts(self, scripts: list[ScriptInfo]) -> None:
         self.scripts = {script.script_id: script for script in scripts}
@@ -63,14 +80,18 @@ class DebuggerState:
         self.script_variables[script_id] = members
 
     def add_breakpoint(self, breakpoint: BreakpointSpec) -> None:
-        self.remove_breakpoint(breakpoint)
+        self.breakpoints = [
+            existing
+            for existing in self.breakpoints
+            if not existing.same_location(breakpoint)
+        ]
         self.breakpoints.append(breakpoint)
 
     def remove_breakpoint(self, breakpoint: BreakpointSpec) -> None:
         self.breakpoints = [
             existing
             for existing in self.breakpoints
-            if not existing.same_location(breakpoint)
+            if not existing.matches_native_remove(breakpoint)
         ]
 
     def apply_message(self, message: LuaMessage) -> None:
@@ -85,12 +106,24 @@ class DebuggerState:
                 script = ScriptInfo(fields["script_id"], fields["full_path_name"])
                 self.scripts[script.script_id] = script
             case LuaMessageId.SCRIPT_REMOVED:
-                self.scripts.pop(fields["script_id"], None)
+                script_id = fields["script_id"]
+                self.scripts.pop(script_id, None)
+                self.threads.pop(script_id, None)
+                self.child_scripts.pop(script_id, None)
+                self.callstacks.pop(script_id, None)
+                self.script_variables.pop(script_id, None)
+                if self.current_script_id == script_id:
+                    self.current_script_id = None
+                    self.current_thread_id = None
+                    self.callstack = []
+                if self.suspended_script_id == script_id:
+                    self.suspended_script_id = None
             case LuaMessageId.SCRIPT_SUSPENDED:
                 script = ScriptInfo(fields["script_id"], fields["full_path_name"])
                 self.scripts[script.script_id] = script
                 self.current_script_id = fields["script_id"]
                 self.current_thread_id = fields["current_thread_id"]
+                self.suspended_script_id = fields["script_id"]
                 self.callstack = list(fields["callstack"])
                 self.callstacks[fields["script_id"]] = self.callstack
                 self.threads[fields["script_id"]] = [

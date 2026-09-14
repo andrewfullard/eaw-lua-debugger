@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 
-from ..debugger.client import CONTROL_MESSAGES
-from ..debugger.types import ScriptInfo
+from ..debugger.client import CONTROL_MESSAGES, DebuggerRunState
+from ..debugger.types import ScriptInfo, VariableValue
 from ..protocol.lua_messages import LuaMessageId
 from .source_view import SmartOpenDialog, SourceEditor
 from .sources import find_lua_files, load_script_source, source_roots
@@ -47,15 +48,31 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
+def _source_key(path: str) -> str:
+    return path.replace("\\", "/").casefold()
+
+
+def _breakpoint_key(spec: BreakpointSpec) -> tuple[bool, int, str, int, str]:
+    return (
+        spec.script_id == -1,
+        spec.thread_id,
+        _source_key(spec.source_name),
+        spec.line_number,
+        spec.condition,
+    )
+
+
 class MainWindow(QMainWindow):
     connect_requested = Signal(dict)
     disconnect_requested = Signal()
     service_requested = Signal()
     refresh_requested = Signal()
     control_requested = Signal(str)
+    break_thread_requested = Signal(int, int)
+    callstack_requested = Signal(int, int)
     threads_requested = Signal(int)
     variable_requested = Signal(int, str)
-    table_requested = Signal(int, int, str, object)
+    table_requested = Signal(int, int, str, object, bool)
     execute_requested = Signal(int, str)
     add_breakpoint_requested = Signal(object)
     remove_breakpoint_requested = Signal(object)
@@ -66,14 +83,18 @@ class MainWindow(QMainWindow):
         self.state = DebuggerState()
         self.source_roots = source_roots(getattr(args, "source_root", []))
         self.source_editors: dict[int, SourceEditor] = {}
-        self._next_local_script_id = -1
+        self._next_local_script_id = -2  # -1 is the native all-scripts breakpoint sentinel.
         self._next_table_request_id = 1
         self._pending_variable_requests: dict[int, int] = {}
+        self.is_connected = False
+        self.run_state: DebuggerRunState | None = None
+        self._breakpoints_to_replay: set[tuple[bool, int, str, int, str]] = set()
         self.setWindowTitle("LuaDebuggerNET")
         self.resize(1074, 847)
         self._build_worker()
         self._build_actions()
         self._build_layout()
+        self._update_debug_actions()
         self.statusBar().showMessage("Not Connected")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.service_requested.emit)
@@ -88,6 +109,8 @@ class MainWindow(QMainWindow):
         self.service_requested.connect(self.worker.service_once)
         self.refresh_requested.connect(self.worker.refresh_scripts)
         self.control_requested.connect(self.worker.control)
+        self.break_thread_requested.connect(self.worker.select_thread)
+        self.callstack_requested.connect(self.worker.select_callstack_frame)
         self.threads_requested.connect(self.worker.load_script)
         self.variable_requested.connect(self.worker.dump_variable)
         self.table_requested.connect(self.worker.dump_table)
@@ -95,7 +118,7 @@ class MainWindow(QMainWindow):
         self.add_breakpoint_requested.connect(self.worker.add_breakpoint)
         self.remove_breakpoint_requested.connect(self.worker.remove_breakpoint)
         self.worker.connected.connect(self._connected)
-        self.worker.disconnected.connect(lambda: self.statusBar().showMessage("Not Connected"))
+        self.worker.disconnected.connect(self._disconnected)
         self.worker.error.connect(self._error)
         self.worker.scripts_loaded.connect(self._scripts_loaded)
         self.worker.threads_loaded.connect(self._threads_loaded)
@@ -104,6 +127,8 @@ class MainWindow(QMainWindow):
         self.worker.variable_loaded.connect(self._variable_loaded)
         self.worker.table_loaded.connect(self._table_loaded)
         self.worker.execute_finished.connect(self._execute_finished)
+        self.worker.debug_state_changed.connect(self._debug_state_changed)
+        self.worker.feedback.connect(self._feedback)
         self.thread.start()
 
     def _build_actions(self) -> None:
@@ -115,8 +140,12 @@ class MainWindow(QMainWindow):
         self.menuBar().addMenu("&Help")
         toolbar = QToolBar()
         self.addToolBar(toolbar)
-        self._menu_action(file_menu, "Connect", self._connect, toolbar=toolbar)
-        self._menu_action(file_menu, "Disconnect", self.disconnect_requested.emit, toolbar=toolbar)
+        self.connect_action = self._menu_action(
+            file_menu, "Connect", self._connect, toolbar=toolbar
+        )
+        self.disconnect_action = self._menu_action(
+            file_menu, "Disconnect", self.disconnect_requested.emit, toolbar=toolbar
+        )
         file_menu.addSeparator()
         self._menu_action(file_menu, "Open...", self._open_file)
         self._menu_action(file_menu, "Smart open...", self._smart_open, "Ctrl+O")
@@ -126,16 +155,23 @@ class MainWindow(QMainWindow):
         self._menu_action(file_menu, "Save a Copy...", self._save_source_copy)
         self._menu_action(file_menu, "Save All", self._save_all_sources)
         file_menu.addSeparator()
-        self._menu_action(file_menu, "Refresh", self.refresh_requested.emit, toolbar=toolbar)
+        self.refresh_action = self._menu_action(
+            file_menu, "Refresh", self.refresh_requested.emit, toolbar=toolbar
+        )
         self._menu_action(file_menu, "Exit", self.close)
         toolbar.addSeparator()
+        self.control_actions: dict[str, QAction] = {}
         for command in CONTROL_MESSAGES:
             action = QAction(command.replace("-", " ").title(), self)
             action.triggered.connect(
-                lambda _checked=False, name=command: self.control_requested.emit(name)
+                lambda _checked=False, name=command: self._request_control(name)
             )
             debug_menu.addAction(action)
             toolbar.addAction(action)
+            self.control_actions[command] = action
+        self.break_thread_action = self._menu_action(
+            debug_menu, "Break Thread", self._break_selected_thread
+        )
         self._menu_action(edit_menu, "Cut", lambda: self._focused_edit_call("cut"), "Ctrl+X")
         self._menu_action(edit_menu, "Copy", lambda: self._focused_edit_call("copy"), "Ctrl+C")
         self._menu_action(edit_menu, "Paste", lambda: self._focused_edit_call("paste"), "Ctrl+V")
@@ -165,6 +201,7 @@ class MainWindow(QMainWindow):
         )
         breakpoints_menu.addSeparator()
         self._menu_action(breakpoints_menu, "Delete All Breakpoints", self._delete_all_breakpoints)
+        self._update_debug_actions()
 
     def _menu_action(
         self,
@@ -220,6 +257,7 @@ class MainWindow(QMainWindow):
         self.files.itemSelectionChanged.connect(self._file_selected)
         self.callstack = QTreeWidget()
         self.callstack.setHeaderLabels(["Depth", "Frame"])
+        self.callstack.itemDoubleClicked.connect(self._callstack_activated)
         self.threads = QTreeWidget()
         self.threads.setHeaderLabels(["ID", "Thread"])
         self.threads.itemSelectionChanged.connect(self._thread_selected)
@@ -240,7 +278,8 @@ class MainWindow(QMainWindow):
         console_layout.addWidget(self.console_output)
         row = QHBoxLayout()
         row.addWidget(self.console_input)
-        row.addWidget(QPushButton("Execute", clicked=self._execute_text))
+        self.execute_button = QPushButton("Execute", clicked=self._execute_text)
+        row.addWidget(self.execute_button)
         console_layout.addLayout(row)
         self.breakpoints = QTableWidget(0, 5)
         self.breakpoints.setHorizontalHeaderLabels(
@@ -267,10 +306,21 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         self.var_script = QSpinBox(maximum=0x7FFFFFFF)
         self.var_name = QLineEdit("_G")
-        self.table_context = QSpinBox(maximum=0x7FFFFFFF)
         self.table_name = QLineEdit("_G")
         self.table_path = QLineEdit()
+        form = QFormLayout()
+        form.addRow("Script", self.var_script)
+        form.addRow("Variable", self.var_name)
+        form.addRow("Table", self.table_name)
+        form.addRow("Table path indexes", self.table_path)
+        buttons = QHBoxLayout()
+        self.read_variable_button = QPushButton("Read Variable", clicked=self._dump_variable)
+        self.expand_table_button = QPushButton("Expand Table (unsafe)", clicked=self._dump_table)
+        buttons.addWidget(self.read_variable_button)
+        buttons.addWidget(self.expand_table_button)
         layout.addWidget(self.variables)
+        layout.addLayout(form)
+        layout.addLayout(buttons)
         return widget
 
     def _breakpoints_tab(self) -> QWidget:
@@ -278,7 +328,8 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         form = QFormLayout()
         self.bp_script = QSpinBox(minimum=-0x7FFFFFFF, maximum=0x7FFFFFFF)
-        self.bp_thread = QSpinBox(maximum=0x7FFFFFFF)
+        self.bp_thread = QSpinBox(minimum=-1, maximum=0x7FFFFFFF)
+        self.bp_thread.setValue(-1)
         self.bp_source = QLineEdit()
         self.bp_line = QSpinBox(maximum=1_000_000)
         self.bp_condition = QLineEdit()
@@ -308,31 +359,138 @@ class MainWindow(QMainWindow):
         )
 
     def _connected(self, server_name: str) -> None:
+        self.is_connected = True
+        self.run_state = DebuggerRunState.RUNNING
         self.state.server_name = server_name
-        self.statusBar().showMessage(f"Connected to {server_name}")
+        self.statusBar().showMessage(f"Connected to {server_name} — select a script")
+        self._update_debug_actions()
+
+    def _disconnected(self) -> None:
+        local_scripts = {
+            script_id: script
+            for script_id, script in self.state.scripts.items()
+            if script_id <= -2
+        }
+        saved_breakpoints = list(self.state.breakpoints)
+        self._breakpoints_to_replay.update(
+            _breakpoint_key(breakpoint)
+            for breakpoint in saved_breakpoints
+            if breakpoint.script_id >= -1
+        )
+        self.state = DebuggerState(
+            scripts=local_scripts,
+            breakpoints=saved_breakpoints,
+        )
+        self.is_connected = False
+        self.run_state = None
+        self._pending_variable_requests.clear()
+        self.files.clear()
+        self.threads.clear()
+        self.callstack.clear()
+        self.variables.clear()
+        self._render_breakpoints()
+        for script_id, editor in list(self.source_editors.items()):
+            if script_id >= 0:
+                self.source_tabs.removeTab(self.source_tabs.indexOf(editor))
+                self.source_editors.pop(script_id)
+        for script_id in self.source_editors:
+            self._render_source_breakpoints(script_id)
+        self.statusBar().showMessage("Not Connected")
+        self._update_debug_actions()
 
     def _scripts_loaded(self, scripts: object) -> None:
-        self.state.set_scripts(list(scripts))
+        local_scripts = [
+            script for script in self.state.scripts.values() if script.script_id <= -2
+        ]
+        game_scripts = [script for script in scripts if script.script_id >= 0]
+        scripts_by_source: dict[str, list[ScriptInfo]] = {}
+        for script in game_scripts:
+            scripts_by_source.setdefault(_source_key(script.full_path_name), []).append(script)
+        remapped = []
+        for breakpoint in self.state.breakpoints:
+            matches = scripts_by_source.get(_source_key(breakpoint.source_name), [])
+            if breakpoint.script_id >= 0 and len(matches) == 1:
+                breakpoint = replace(
+                    breakpoint,
+                    script_id=matches[0].script_id,
+                    source_name=matches[0].full_path_name,
+                )
+            remapped.append(breakpoint)
+        self.state.breakpoints = remapped
+        self.state.set_scripts([*local_scripts, *game_scripts])
+        if (
+            self.state.current_script_id is not None
+            and self.state.current_script_id not in self.state.scripts
+        ):
+            self.state.current_script_id = None
+            self.state.current_thread_id = None
+            self.state.suspended_script_id = None
+            self.state.callstack = []
+            self._clear_inspection_results()
         self.files.clear()
-        for script in sorted(self.state.scripts.values(), key=lambda item: item.full_path_name):
+        for script in sorted(game_scripts, key=lambda item: item.full_path_name):
             self.files.addTopLevelItem(
                 QTreeWidgetItem([str(script.script_id), script.full_path_name])
             )
         self._find_files(self.find_text.text())
+        if self._breakpoints_to_replay:
+            replay = [
+                breakpoint
+                for breakpoint in self.state.breakpoints
+                if _breakpoint_key(breakpoint) in self._breakpoints_to_replay
+                and self._can_send_breakpoint(breakpoint)
+            ]
+            for breakpoint in replay:
+                self.add_breakpoint_requested.emit(breakpoint)
+                self._breakpoints_to_replay.discard(_breakpoint_key(breakpoint))
+            if replay:
+                self.statusBar().showMessage(f"Restoring {len(replay)} breakpoint(s)")
+            if self._breakpoints_to_replay:
+                self.statusBar().showMessage(
+                    f"{len(self._breakpoints_to_replay)} breakpoint(s) waiting for a unique "
+                    "matching script"
+                )
+        self._render_breakpoints()
+        self._update_debug_actions()
 
     def _threads_loaded(self, script_id: int, threads: object) -> None:
-        self.state.set_threads(script_id, list(threads))
+        threads = list(threads)
+        self.state.set_threads(script_id, threads)
+        if (
+            script_id == self.state.current_script_id
+            and self.state.current_thread_id
+            not in {thread.thread_index for thread in threads}
+        ):
+            self.state.current_thread_id = None
         self._render_threads(script_id)
+        self._update_debug_actions()
 
     def _children_loaded(self, script_id: int, children: object) -> None:
         self.state.set_child_scripts(script_id, list(children))
 
     def _message_received(self, message: object) -> None:
         previous_script_id = self.state.current_script_id
-        script_was_suspended = (
-            getattr(message, "message_id", None) == LuaMessageId.SCRIPT_SUSPENDED
+        message_id = getattr(message, "message_id", None)
+        script_was_suspended = message_id == LuaMessageId.SCRIPT_SUSPENDED
+        selected_script_was_removed = (
+            message_id == LuaMessageId.SCRIPT_REMOVED
+            and message.fields["script_id"] == previous_script_id
         )
+        if script_was_suspended or selected_script_was_removed:
+            self._clear_inspection_results()
+        if message_id == LuaMessageId.SCRIPT_REMOVED:
+            removed_id = message.fields["script_id"]
+            self._breakpoints_to_replay.update(
+                _breakpoint_key(breakpoint)
+                for breakpoint in self.state.breakpoints
+                if breakpoint.script_id == removed_id
+            )
         self.state.apply_message(message)
+        if message_id in {LuaMessageId.SCRIPT_ADDED, LuaMessageId.SCRIPT_REMOVED}:
+            self._scripts_loaded(list(self.state.scripts.values()))
+            self._render_breakpoints()
+            for script_id in self.source_editors:
+                self._render_source_breakpoints(script_id)
         if self.state.output:
             self.output.appendPlainText(self.state.output[-1])
         if self.state.parse_errors:
@@ -344,13 +502,23 @@ class MainWindow(QMainWindow):
             if script_was_suspended or self.state.current_script_id != previous_script_id:
                 self._select_game_script(
                     self.state.current_script_id,
-                    open_source=False,
+                    open_source=script_was_suspended,
                     request_threads=False,
                 )
+        if script_was_suspended:
+            self.run_state = DebuggerRunState.SUSPENDED
+            self.statusBar().showMessage("Suspended — inspect variables or continue/step")
+        self._update_debug_actions()
 
-    def _variable_loaded(self, value: object) -> None:
+    def _variable_loaded(self, script_id: int, value: VariableValue) -> None:
+        if script_id != self.state.current_script_id:
+            self.statusBar().showMessage(
+                f"Ignored stale variable result from script {script_id}"
+            )
+            return
         self.state.set_variable(value)
         self._render_variables()
+        self.statusBar().showMessage(f"Loaded variable {value.variable_name}")
 
     def _table_loaded(
         self,
@@ -361,6 +529,11 @@ class MainWindow(QMainWindow):
     ) -> None:
         members = list(members)
         pending_script_id = self._pending_variable_requests.pop(context_id, None)
+        if script_id != self.state.current_script_id:
+            self.statusBar().showMessage(
+                f"Ignored stale table result from script {script_id}"
+            )
+            return
         if pending_script_id == script_id and name == "_G":
             self.state.set_script_variables(script_id, members)
             self.statusBar().showMessage(f"Loaded variables for script {script_id}")
@@ -377,6 +550,9 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         script_id = int(selected[0].text(0))
+        if script_id != self.state.current_script_id:
+            self.state.current_thread_id = None
+            self._clear_inspection_results()
         self._select_game_script(script_id, open_source=True, request_threads=True)
 
     def _select_game_script(
@@ -388,9 +564,31 @@ class MainWindow(QMainWindow):
     ) -> None:
         if script_id not in self.state.scripts:
             return
+        selected_source = _source_key(self.state.scripts[script_id].full_path_name)
+        restored = []
+        remapped = []
+        for breakpoint in self.state.breakpoints:
+            if (
+                breakpoint.script_id >= 0
+                and _breakpoint_key(breakpoint) in self._breakpoints_to_replay
+                and _source_key(breakpoint.source_name) == selected_source
+            ):
+                old_key = _breakpoint_key(breakpoint)
+                breakpoint = replace(
+                    breakpoint,
+                    script_id=script_id,
+                    source_name=self.state.scripts[script_id].full_path_name,
+                )
+                self._breakpoints_to_replay.discard(old_key)
+                restored.append(breakpoint)
+            remapped.append(breakpoint)
+        self.state.breakpoints = remapped
+        for breakpoint in restored:
+            self.add_breakpoint_requested.emit(breakpoint)
         self.state.current_script_id = script_id
         self.var_script.setValue(script_id)
         self.bp_script.setValue(script_id)
+        self.bp_thread.setValue(-1)
         if open_source:
             self._open_source(self.state.scripts[script_id])
         self._render_threads(script_id)
@@ -398,24 +596,68 @@ class MainWindow(QMainWindow):
         self._render_variables()
         if request_threads and script_id >= 0:
             self.threads_requested.emit(script_id)
+        if restored:
+            self.statusBar().showMessage(f"Restoring {len(restored)} breakpoint(s)")
+            self._render_breakpoints()
+        self._update_debug_actions()
 
     def _thread_selected(self) -> None:
         selected = self.threads.selectedItems()
         if selected:
             thread_id = int(selected[0].text(0))
+            if thread_id != self.state.current_thread_id:
+                self._clear_inspection_results()
             self.state.current_thread_id = thread_id
             self.bp_thread.setValue(thread_id)
+        self._update_debug_actions()
+
+    def _break_selected_thread(self) -> None:
+        script_id = self.state.current_script_id
+        thread_id = self.state.current_thread_id
+        if script_id is not None and thread_id is not None:
+            self.break_thread_requested.emit(script_id, thread_id)
+            self.break_thread_action.setEnabled(False)
+            self.statusBar().showMessage("Sending thread break request...")
+
+    def _request_control(self, command: str) -> None:
+        self.control_requested.emit(command)
+        self.control_actions[command].setEnabled(False)
+        self.statusBar().showMessage(f"Sending {command.replace('-', ' ')} request...")
+
+    def _callstack_activated(self, item: QTreeWidgetItem, _column: int) -> None:
+        script_id = self.state.current_script_id
+        if script_id is None or self.run_state != DebuggerRunState.SUSPENDED:
+            return
+        self._clear_inspection_results()
+        self.callstack_requested.emit(script_id, int(item.text(0)))
+        self.callstack.setEnabled(False)
+        self.statusBar().showMessage(f"Selecting call-stack frame {item.text(0)}...")
 
     def _dump_variable(self) -> None:
-        self.variable_requested.emit(self.var_script.value(), self.var_name.text())
+        name = self.var_name.text()
+        self.variable_requested.emit(self.var_script.value(), name)
+        self.statusBar().showMessage(f"Reading variable {name}...")
 
     def _dump_table(self) -> None:
+        choice = QMessageBox.warning(
+            self,
+            "Unsafe table expansion",
+            "The game can assert or close if any displayed table key or value is too long. "
+            "Only continue if you accept that risk. Never expand _G.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            return
         path = [int(part) for part in self.table_path.text().split() if part]
+        context_id = self._next_table_request_id
+        self._next_table_request_id += 1
         self.table_requested.emit(
             self.var_script.value(),
-            self.table_context.value(),
+            context_id,
             self.table_name.text(),
             path,
+            True,
         )
 
     def _execute_text(self) -> None:
@@ -427,19 +669,102 @@ class MainWindow(QMainWindow):
         self.state.add_breakpoint(spec)
         if self._can_send_breakpoint(spec):
             self.add_breakpoint_requested.emit(spec)
+        elif spec.script_id >= -1:
+            self._breakpoints_to_replay.add(_breakpoint_key(spec))
         self._render_breakpoints()
         self._render_source_breakpoints(spec.script_id)
 
     def _remove_breakpoint(self) -> None:
         spec = self._breakpoint_spec()
         self.state.remove_breakpoint(spec)
+        live_keys = {_breakpoint_key(breakpoint) for breakpoint in self.state.breakpoints}
+        self._breakpoints_to_replay.intersection_update(live_keys)
         if self._can_send_breakpoint(spec):
             self.remove_breakpoint_requested.emit(spec)
         self._render_breakpoints()
         self._render_source_breakpoints(spec.script_id)
 
     def _can_send_breakpoint(self, spec: BreakpointSpec) -> bool:
-        return spec.script_id >= 0
+        if spec.script_id >= 0:
+            script = self.state.scripts.get(spec.script_id)
+            matches = [
+                candidate
+                for candidate in self.state.scripts.values()
+                if candidate.script_id >= 0
+                and _source_key(candidate.full_path_name) == _source_key(spec.source_name)
+            ]
+            return (
+                script is not None
+                and len(matches) == 1
+                and matches[0].script_id == spec.script_id
+            )
+        return spec.script_id == -1 and spec.thread_id == -1 and any(
+            _source_key(script.full_path_name) == _source_key(spec.source_name)
+            for script in self.state.scripts.values()
+            if script.script_id >= 0
+        )
+
+    def _debug_state_changed(self, state: str) -> None:
+        previous_run_state = self.run_state
+        if state == "disconnected":
+            self.run_state = None
+        else:
+            self.run_state = DebuggerRunState(state)
+            if (
+                previous_run_state == DebuggerRunState.SUSPENDED
+                and self.run_state != DebuggerRunState.SUSPENDED
+            ):
+                self._clear_inspection_results()
+            if self.run_state != DebuggerRunState.SUSPENDED:
+                self.state.suspended_script_id = None
+            messages = {
+                DebuggerRunState.RUNNING: "Running — select an active script and press Break",
+                DebuggerRunState.BREAK_PENDING: (
+                    "Break requested — waiting for the script to reach a Lua line"
+                ),
+                DebuggerRunState.SUSPENDED: "Suspended — inspect variables or continue/step",
+            }
+            self.statusBar().showMessage(messages[self.run_state])
+        self._update_debug_actions()
+
+    def _feedback(self, message: str) -> None:
+        if message.startswith("Selected call-stack frame"):
+            self._clear_inspection_results()
+        self.statusBar().showMessage(message)
+        self._update_debug_actions()
+
+    def _update_debug_actions(self) -> None:
+        running = self.is_connected and self.run_state == DebuggerRunState.RUNNING
+        suspended = self.is_connected and self.run_state == DebuggerRunState.SUSPENDED
+        selected_script = self.state.current_script_id in self.state.scripts
+        self.connect_action.setEnabled(not self.is_connected)
+        self.disconnect_action.setEnabled(self.is_connected)
+        self.refresh_action.setEnabled(self.is_connected)
+        self.control_actions["break"].setEnabled(running and selected_script)
+        for command in ("continue", "step-over", "step-into", "step-out"):
+            self.control_actions[command].setEnabled(suspended)
+        self.break_thread_action.setEnabled(
+            self.is_connected
+            and self.run_state
+            in {
+                DebuggerRunState.RUNNING,
+                DebuggerRunState.BREAK_PENDING,
+                DebuggerRunState.SUSPENDED,
+            }
+            and selected_script
+            and self.state.current_thread_id is not None
+            and (
+                self.run_state != DebuggerRunState.SUSPENDED
+                or self.state.current_script_id == self.state.suspended_script_id
+            )
+        )
+        if hasattr(self, "callstack"):
+            self.callstack.setEnabled(suspended)
+        if hasattr(self, "read_variable_button"):
+            can_inspect = self.is_connected and selected_script
+            self.read_variable_button.setEnabled(can_inspect)
+            self.expand_table_button.setEnabled(can_inspect)
+            self.execute_button.setEnabled(can_inspect)
 
     def _breakpoint_spec(self) -> BreakpointSpec:
         script_id = self.bp_script.value()
@@ -583,19 +908,41 @@ class MainWindow(QMainWindow):
             self._toggle_source_breakpoint(editor.source.script.script_id, editor.source_line())
 
     def _toggle_global_breakpoint(self) -> None:
-        self.bp_thread.setValue(0)
-        self._toggle_current_line_breakpoint()
+        editor = self._current_editor()
+        if (
+            editor is None
+            or editor.source.script.script_id < 0
+            or editor.source.script.script_id not in self.state.scripts
+        ):
+            self.statusBar().showMessage("A global breakpoint requires a game-reported source")
+            return
+        script_id = editor.source.script.script_id
+        self.bp_script.setValue(-1)
+        self.bp_thread.setValue(-1)
+        self.bp_source.setText(editor.source.script.full_path_name)
+        self.bp_line.setValue(editor.source_line())
+        spec = self._breakpoint_spec()
+        if any(existing.same_location(spec) for existing in self.state.breakpoints):
+            self._remove_breakpoint()
+        else:
+            self._add_breakpoint()
+        self._render_source_breakpoints(script_id)
 
     def _delete_all_breakpoints(self) -> None:
         for spec in list(self.state.breakpoints):
-            self.state.remove_breakpoint(spec)
+            if spec not in self.state.breakpoints:
+                continue
             if self._can_send_breakpoint(spec):
                 self.remove_breakpoint_requested.emit(spec)
-            self._render_source_breakpoints(spec.script_id)
+            self.state.remove_breakpoint(spec)
+        self._breakpoints_to_replay.clear()
+        for script_id in self.source_editors:
+            self._render_source_breakpoints(script_id)
         self._render_breakpoints()
 
     def _toggle_source_breakpoint(self, script_id: int, line_number: int) -> None:
         if script_id not in self.state.scripts:
+            self.statusBar().showMessage("That script is no longer active in the game")
             return
         self.bp_script.setValue(script_id)
         self.bp_line.setValue(line_number)
@@ -610,11 +957,16 @@ class MainWindow(QMainWindow):
         editor = self.source_editors.get(script_id)
         if editor is None:
             return
+        source_name = editor.source.script.full_path_name.lower()
         editor.set_breakpoints(
             {
                 breakpoint.line_number
                 for breakpoint in self.state.breakpoints
                 if breakpoint.script_id == script_id
+                or (
+                    breakpoint.script_id == -1
+                    and breakpoint.source_name.lower() == source_name
+                )
             }
         )
 
@@ -633,15 +985,6 @@ class MainWindow(QMainWindow):
 
     def _render_variables(self) -> None:
         self.variables.clear()
-        script_id = self.state.current_script_id
-        if script_id is not None:
-            for member in self.state.script_variables.get(script_id, []):
-                self.variables.addTopLevelItem(
-                    QTreeWidgetItem(
-                        [member.key_text, str(member.value_type), member.value_text]
-                    )
-                )
-            return
         for value in self.state.variables.values():
             self.variables.addTopLevelItem(
                 QTreeWidgetItem([value.variable_name, str(value.value_type), value.value_text])
@@ -654,6 +997,11 @@ class MainWindow(QMainWindow):
                 )
             self.variables.addTopLevelItem(parent)
         self.variables.expandAll()
+
+    def _clear_inspection_results(self) -> None:
+        self.state.variables.clear()
+        self.state.tables.clear()
+        self._render_variables()
 
     def _render_breakpoints(self) -> None:
         self.breakpoints.setRowCount(len(self.state.breakpoints))

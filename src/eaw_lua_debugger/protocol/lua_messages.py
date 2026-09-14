@@ -26,6 +26,8 @@ class LuaMessageId(IntEnum):
     HEARTBEAT = 13
     ATTACH_SCRIPT = 14
     SELECT_SCRIPT = 15
+    BREAK_THREAD = 16
+    # Compatibility alias: native ID 16 resumes/arms a thread break; it is not selection.
     SELECT_THREAD = 16
     CONTINUE = 17
     DUMP_VARIABLE = 19
@@ -70,7 +72,9 @@ def encode_lua_message(message_id: int | LuaMessageId, *fields: int | str | list
     _write_header(writer, int(message_id))
     for field in fields:
         if isinstance(field, int):
-            writer.write_u32(field)
+            if field < -1 or field >= 1 << 32:
+                raise ValueError("integer does not fit 32-bit debugger field")
+            writer.write_u32(field & 0xFFFFFFFF)
         elif isinstance(field, str):
             writer.write_string(field)
         elif isinstance(field, list):
@@ -107,6 +111,7 @@ def remove_breakpoint(
     thread_id: int,
     source_name: str,
     line_number: int,
+    condition: str = "",
 ) -> BitBuffer:
     return encode_lua_message(
         LuaMessageId.REMOVE_BREAKPOINT,
@@ -114,6 +119,7 @@ def remove_breakpoint(
         thread_id,
         source_name,
         line_number,
+        condition,
     )
 
 

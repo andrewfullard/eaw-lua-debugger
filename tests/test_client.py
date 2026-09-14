@@ -1,6 +1,6 @@
 import pytest
 
-from eaw_lua_debugger.core.exceptions import Timeout
+from eaw_lua_debugger.core.exceptions import ConnectionLost, Timeout
 from eaw_lua_debugger.debugger.client import LuaDebuggerClient
 from eaw_lua_debugger.protocol.lua_messages import LuaMessageId, encode_lua_message
 from eaw_lua_debugger.protocol.pgnet import (
@@ -63,3 +63,15 @@ def test_connect_times_out_if_spoot_sequence_is_not_consumed():
 
     with pytest.raises(Timeout):
         client.wait_for(LuaMessageId.HELLO)
+
+
+def test_socket_reset_is_reported_as_connection_loss():
+    class ResetSocket:
+        def recvfrom(self, _size):
+            raise ConnectionResetError
+
+    client = LuaDebuggerClient()
+    client.socket = ResetSocket()
+
+    with pytest.raises(ConnectionLost, match="reset"):
+        client.service_once()

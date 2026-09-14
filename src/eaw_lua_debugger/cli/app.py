@@ -80,12 +80,17 @@ def main(argv: list[str] | None = None) -> int:
     execute.add_argument("text")
     execute.set_defaults(handler=commands.execute)
 
-    table = subparsers.add_parser("table", help="dump a table in a script context")
+    table = subparsers.add_parser("table", help="unsafely dump a known-small table")
     _add_connection_args(table)
     table.add_argument("script_id", type=int)
     table.add_argument("context_id", type=int, help="opaque table context/request id")
     table.add_argument("table_name")
     table.add_argument("--path", type=int, nargs="*", default=[])
+    table.add_argument(
+        "--unsafe",
+        action="store_true",
+        help="allow raw enumeration; 255-byte member strings assert inside the game",
+    )
     table.add_argument("--json", action="store_true", help="emit JSON")
     table.set_defaults(handler=commands.table)
 

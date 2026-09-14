@@ -16,15 +16,26 @@ class FakeClient:
     def connect(self):
         return "StarWarsI:test"
 
-    def dump_table(self, script_id, context_or_request_id, table_name, path):
-        self.args = (script_id, context_or_request_id, table_name, path)
+    def request_scripts(self):
+        return []
+
+    def dump_table(
+        self,
+        script_id,
+        context_or_request_id,
+        table_name,
+        path,
+        *,
+        allow_unsafe=False,
+    ):
+        self.args = (script_id, context_or_request_id, table_name, path, allow_unsafe)
         return [TableMember(1, "k", 2, "v")]
 
 
 def test_table_cli_prints_members(monkeypatch, capsys):
     monkeypatch.setattr(commands, "LuaDebuggerClient", FakeClient)
 
-    assert cli.main(["table", "9", "77", "Root", "--path", "1", "2"]) == 0
+    assert cli.main(["table", "9", "77", "Root", "--path", "1", "2", "--unsafe"]) == 0
 
     output = capsys.readouterr().out
     assert "k\t1\tv\t2" in output

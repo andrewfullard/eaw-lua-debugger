@@ -39,6 +39,7 @@ def test_client_request_threads_sends_request_and_returns_threads():
         raw_payload=BitWriter().buffer(),
     )
     client = LuaDebuggerClient()
+    client.known_script_ids.add(42)
     client.send_lua = lambda *args: sent.append(args)
     client.wait_for = lambda message_id, **_: message
 

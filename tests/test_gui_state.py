@@ -49,3 +49,44 @@ def test_debugger_state_tracks_output_variables_tables_and_breakpoints():
     assert state.variables["PlayerObject"].value_text == "table: 1234"
     assert state.tables["PlayerObject"][0].value_text == "Empire"
     assert state.breakpoints == []
+
+
+def test_breakpoint_removal_mirrors_native_wildcard_scope():
+    state = DebuggerState()
+    state.breakpoints = [
+        BreakpointSpec(-1, -1, "Foo.lua", 10),
+        BreakpointSpec(7, -1, "Foo.lua", 10),
+        BreakpointSpec(7, 3, "Foo.lua", 10),
+        BreakpointSpec(8, 4, "Foo.lua", 11),
+    ]
+
+    state.remove_breakpoint(BreakpointSpec(7, -1, "Foo.lua", 10))
+
+    assert state.breakpoints == [BreakpointSpec(8, 4, "Foo.lua", 11)]
+
+
+def test_removed_script_clears_every_runtime_reference_to_its_id():
+    state = DebuggerState()
+    state.set_scripts([ScriptInfo(7, "Foo.lua")])
+    state.set_threads(7, [ThreadInfo(0, "main")])
+    state.set_child_scripts(7, ["Child.lua"])
+    state.set_script_variables(7, [])
+    state.callstacks[7] = ["Foo.lua:1"]
+    state.callstack = state.callstacks[7]
+    state.current_script_id = 7
+    state.current_thread_id = 0
+    state.add_breakpoint(BreakpointSpec(7, -1, "Foo.lua", 1))
+
+    state.apply_message(
+        LuaMessage(LuaMessageId.SCRIPT_REMOVED, {"script_id": 7}, raw_payload=None)
+    )
+
+    assert state.current_script_id is None
+    assert state.current_thread_id is None
+    assert state.callstack == []
+    assert state.scripts == {}
+    assert state.threads == {}
+    assert state.child_scripts == {}
+    assert state.callstacks == {}
+    assert state.script_variables == {}
+    assert state.breakpoints == [BreakpointSpec(7, -1, "Foo.lua", 1)]

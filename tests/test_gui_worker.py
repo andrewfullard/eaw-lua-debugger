@@ -4,25 +4,46 @@ pytest.importorskip("PySide6")
 
 import argparse
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
-from eaw_lua_debugger.debugger.types import ScriptInfo, TableMember, ThreadInfo
+from eaw_lua_debugger.core.exceptions import ConnectionLost
+from eaw_lua_debugger.debugger.client import DebuggerRunState
+from eaw_lua_debugger.debugger.types import (
+    ScriptInfo,
+    TableMember,
+    ThreadInfo,
+    VariableValue,
+)
 from eaw_lua_debugger.gui import DebuggerWorker, MainWindow
+from eaw_lua_debugger.gui.state import BreakpointSpec
 from eaw_lua_debugger.protocol.lua_messages import LuaMessage, LuaMessageId
 
 
 class FakeClient:
     def __init__(self):
         self.calls = []
+        self.attached_script_ids = set()
+        self.context_script_id = None
+        self.run_state = DebuggerRunState.RUNNING
 
     def select_script(self, script_id):
         self.calls.append(("select_script", script_id))
+        self.context_script_id = script_id
+        self.run_state = DebuggerRunState.BREAK_PENDING
 
     def select_thread(self, thread_id):
         self.calls.append(("select_thread", thread_id))
 
+    def break_thread(self, thread_id):
+        self.calls.append(("break_thread", thread_id))
+        self.run_state = DebuggerRunState.BREAK_PENDING
+
+    def set_callstack_depth(self, script_id, depth):
+        self.calls.append(("set_callstack_depth", script_id, depth))
+
     def attach_script(self, script_id):
         self.calls.append(("attach_script", script_id))
+        self.attached_script_ids.add(script_id)
         return []
 
     def request_threads(self, script_id):
@@ -33,19 +54,165 @@ class FakeClient:
         self.calls.append(("service_available",))
         return []
 
-    def dump_table(self, script_id, context_id, name, path):
-        self.calls.append(("dump_table", script_id, context_id, name, path))
+    def abort(self):
+        self.calls.append(("abort",))
+
+    def break_script(self, script_id):
+        self.calls.append(("break_script", script_id))
+        self.run_state = DebuggerRunState.BREAK_PENDING
+
+    def send_control(self, command):
+        self.calls.append(("send_control", command))
+        self.run_state = (
+            DebuggerRunState.RUNNING
+            if command == "continue"
+            else DebuggerRunState.BREAK_PENDING
+        )
+
+    def flush(self):
+        self.calls.append(("flush",))
+
+    def add_breakpoint(self, *args):
+        self.calls.append(("add_breakpoint", *args))
+
+    def remove_breakpoint(self, *args):
+        self.calls.append(("remove_breakpoint", *args))
+
+    def dump_table(self, script_id, context_id, name, path, *, allow_unsafe=False):
+        self.calls.append(("dump_table", script_id, context_id, name, path, allow_unsafe))
         return [TableMember(4, "GlobalName", 2, "GlobalValue")]
 
 
-def test_gui_loading_a_script_does_not_send_context_or_break_commands():
+def test_gui_loading_a_script_attaches_hook_without_breaking():
+    worker = DebuggerWorker()
+    client = FakeClient()
+    worker.client = client
+    children = []
+    worker.children_loaded.connect(lambda *args: children.append(args))
+
+    worker.load_script(7)
+
+    assert client.calls == [("attach_script", 7), ("request_threads", 7)]
+    assert children == [(7, [])]
+
+
+def test_gui_break_targets_current_attached_script():
+    worker = DebuggerWorker()
+    client = FakeClient()
+    worker.client = client
+    worker.current_script_id = 7
+
+    worker.control("break")
+
+    assert client.calls == [("break_script", 7), ("flush",)]
+
+
+def test_gui_worker_tracks_script_from_suspended_event():
+    message = LuaMessage(
+        LuaMessageId.SCRIPT_SUSPENDED,
+        {
+            "script_id": 9,
+            "current_thread_id": 2,
+            "full_path_name": "Data/Scripts/Foo.lua",
+            "callstack": [],
+            "threads": [],
+        },
+        raw_payload=None,
+    )
+
+    class EventClient(FakeClient):
+        def service_available(self):
+            return [message]
+
+    worker = DebuggerWorker()
+    worker.client = EventClient()
+
+    worker.service_once()
+
+    assert worker.current_script_id == 9
+
+
+def test_gui_worker_clears_removed_script_before_next_break():
+    removed = LuaMessage(
+        LuaMessageId.SCRIPT_REMOVED,
+        {"script_id": 9},
+        raw_payload=None,
+    )
+
+    class EventClient(FakeClient):
+        def service_available(self):
+            self.run_state = DebuggerRunState.RUNNING
+            return [removed]
+
+    worker = DebuggerWorker()
+    client = EventClient()
+    worker.client = client
+    worker.current_script_id = 9
+    errors = []
+    states = []
+    worker.error.connect(errors.append)
+    worker.debug_state_changed.connect(states.append)
+
+    worker.service_once()
+    worker.control("break")
+
+    assert worker.current_script_id is None
+    assert not any(call[0] == "break_script" for call in client.calls)
+    assert errors == ["select an active script before requesting Break"]
+    assert states == ["running", "running"]
+
+
+def test_gui_worker_attaches_before_adding_script_breakpoint():
+    worker = DebuggerWorker()
+    client = FakeClient()
+    worker.client = client
+    spec = BreakpointSpec(7, -1, "Foo.lua", 12, "")
+
+    worker.add_breakpoint(spec)
+
+    assert client.calls == [
+        ("attach_script", 7),
+        ("add_breakpoint", 7, -1, "Foo.lua", 12, ""),
+        ("flush",),
+    ]
+
+
+def test_gui_worker_break_thread_matches_stock_context_order():
     worker = DebuggerWorker()
     client = FakeClient()
     worker.client = client
 
-    worker.load_script(7)
+    worker.select_thread(7, 3)
 
-    assert client.calls == [("request_threads", 7)]
+    assert client.calls == [
+        ("attach_script", 7),
+        ("select_script", 7),
+        ("break_thread", 3),
+        ("flush",),
+    ]
+
+
+def test_gui_worker_selects_callstack_frame_only_through_client_guard():
+    worker = DebuggerWorker()
+    client = FakeClient()
+    worker.client = client
+
+    worker.select_callstack_frame(7, 2)
+
+    assert client.calls == [("set_callstack_depth", 7, 2), ("flush",)]
+
+
+def test_gui_worker_remove_breakpoint_includes_native_condition_field():
+    worker = DebuggerWorker()
+    client = FakeClient()
+    worker.client = client
+
+    worker.remove_breakpoint(BreakpointSpec(7, -1, "Foo.lua", 12, "x > 0"))
+
+    assert client.calls == [
+        ("remove_breakpoint", 7, -1, "Foo.lua", 12, "x > 0"),
+        ("flush",),
+    ]
 
 
 def test_gui_worker_reports_backend_timeout_without_traceback():
@@ -63,6 +230,24 @@ def test_gui_worker_reports_backend_timeout_without_traceback():
     assert errors == ["boom"]
 
 
+def test_gui_worker_restores_actual_state_after_command_failure():
+    class RejectingClient(FakeClient):
+        def send_control(self, command):
+            raise ValueError(f"cannot {command}")
+
+    worker = DebuggerWorker()
+    worker.client = RejectingClient()
+    states = []
+    errors = []
+    worker.debug_state_changed.connect(states.append)
+    worker.error.connect(errors.append)
+
+    worker.control("continue")
+
+    assert states == ["running"]
+    assert errors == ["cannot continue"]
+
+
 def test_gui_worker_drains_available_packets():
     worker = DebuggerWorker()
     client = FakeClient()
@@ -73,6 +258,27 @@ def test_gui_worker_drains_available_packets():
     assert client.calls == [("service_available",)]
 
 
+def test_gui_worker_disconnects_when_game_resets_connection():
+    class LostClient(FakeClient):
+        def service_available(self):
+            raise ConnectionLost("game reset")
+
+    worker = DebuggerWorker()
+    client = LostClient()
+    worker.client = client
+    disconnected = []
+    errors = []
+    worker.disconnected.connect(lambda: disconnected.append(True))
+    worker.error.connect(errors.append)
+
+    worker.service_once()
+
+    assert worker.client is None
+    assert client.calls == [("abort",)]
+    assert disconnected == [True]
+    assert errors == ["game reset"]
+
+
 def test_gui_worker_table_dump_reports_script_context_and_members():
     worker = DebuggerWorker()
     client = FakeClient()
@@ -80,10 +286,23 @@ def test_gui_worker_table_dump_reports_script_context_and_members():
     loaded = []
     worker.table_loaded.connect(lambda *args: loaded.append(args))
 
-    worker.dump_table(7, 99, "_G", [])
+    worker.dump_table(7, 99, "_G", [], True)
 
-    assert client.calls == [("dump_table", 7, 99, "_G", [])]
+    assert client.calls == [("dump_table", 7, 99, "_G", [], True)]
     assert loaded == [(7, 99, "_G", [TableMember(4, "GlobalName", 2, "GlobalValue")])]
+
+
+def test_gui_worker_variable_result_includes_requesting_script():
+    worker = DebuggerWorker()
+    client = FakeClient()
+    client.dump_variable = lambda script_id, name: VariableValue(name, 4, "table: 1234")
+    worker.client = client
+    loaded = []
+    worker.variable_loaded.connect(lambda *args: loaded.append(args))
+
+    worker.dump_variable(7, "planet")
+
+    assert loaded == [(7, VariableValue("planet", 4, "table: 1234"))]
 
 
 def test_gui_layout_prioritizes_source_editor_width():
@@ -136,6 +355,357 @@ def test_gui_breakpoints_render_in_table_and_source_gutter_not_output(tmp_path):
         assert window.breakpoints.rowCount() == 1
         assert window.output.toPlainText() == ""
         assert editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_global_breakpoint_uses_native_sentinels_and_delete_clears_gutter(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "Foo.lua"
+    source.write_text("a\nb\n", encoding="utf-8")
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    sent = []
+    window.add_breakpoint_requested.connect(sent.append)
+    try:
+        script = ScriptInfo(7, str(source))
+        window.state.scripts[7] = script
+        window._open_source(script)
+        editor = window.source_editors[7]
+        cursor = editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Down)
+        editor.setTextCursor(cursor)
+
+        window._toggle_global_breakpoint()
+
+        assert sent[0].script_id == -1
+        assert sent[0].thread_id == -1
+        assert editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
+
+        window._delete_all_breakpoints()
+
+        assert not window.state.breakpoints
+        assert not editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_disconnect_keeps_breakpoints_for_replay_after_goodbye(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "Foo.lua"
+    source.write_text("a\n", encoding="utf-8")
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    try:
+        script = ScriptInfo(7, str(source))
+        window.state.scripts[7] = script
+        window._open_source(script)
+        window.state.current_script_id = 7
+        window.state.add_breakpoint(BreakpointSpec(7, -1, str(source), 1))
+        window._render_breakpoints()
+        window._render_source_breakpoints(7)
+
+        window._disconnected()
+
+        assert window.state.current_script_id is None
+        assert window.state.breakpoints == [BreakpointSpec(7, -1, str(source), 1)]
+        assert window.breakpoints.rowCount() == 1
+        assert 7 not in window.source_editors
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_reconnect_remaps_and_replays_breakpoints_by_source(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "Foo.lua"
+    source.write_text("a\n", encoding="utf-8")
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    replayed = []
+    window.add_breakpoint_requested.connect(replayed.append)
+    try:
+        window.state.scripts[7] = ScriptInfo(7, str(source))
+        window.state.add_breakpoint(BreakpointSpec(7, -1, str(source), 1, "ready"))
+
+        window._disconnected()
+        window._connected("StarWarsI:test")
+        window._scripts_loaded([ScriptInfo(42, str(source))])
+
+        expected = BreakpointSpec(42, -1, str(source), 1, "ready")
+        assert window.state.breakpoints == [expected]
+        assert replayed == [expected]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_breakpoint_replay_waits_for_unique_matching_script(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = str(tmp_path / "Foo.lua")
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    replayed = []
+    window.add_breakpoint_requested.connect(replayed.append)
+    try:
+        window.state.scripts[7] = ScriptInfo(7, source)
+        window.state.add_breakpoint(BreakpointSpec(7, -1, source, 1))
+        window._disconnected()
+        window._connected("StarWarsI:test")
+
+        window._scripts_loaded([ScriptInfo(40, "Other.lua")])
+        assert replayed == []
+
+        window._scripts_loaded([ScriptInfo(40, "Other.lua"), ScriptInfo(42, source)])
+        assert replayed == [BreakpointSpec(42, -1, source, 1)]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_breakpoint_replay_does_not_guess_between_duplicate_lua_states(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = str(tmp_path / "Foo.lua")
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    replayed = []
+    window.add_breakpoint_requested.connect(replayed.append)
+    try:
+        window.state.scripts[7] = ScriptInfo(7, source)
+        window.state.add_breakpoint(BreakpointSpec(7, -1, source, 1))
+        window._disconnected()
+        window._connected("StarWarsI:test")
+
+        window._scripts_loaded([ScriptInfo(41, source), ScriptInfo(42, source)])
+
+        assert replayed == []
+        assert "waiting for a unique matching script" in window.statusBar().currentMessage()
+
+        window._select_game_script(41, open_source=False, request_threads=False)
+
+        assert replayed == [BreakpointSpec(41, -1, source, 1)]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_gui_actions_follow_stock_running_and_suspended_states():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        window.state.scripts[7] = ScriptInfo(7, "Foo.lua")
+        window.state.current_script_id = 7
+        window._connected("StarWarsI:test")
+        window._update_debug_actions()
+
+        assert window.control_actions["break"].isEnabled()
+        assert not window.control_actions["step-over"].isEnabled()
+
+        window._request_control("break")
+
+        assert window.run_state == DebuggerRunState.RUNNING
+
+        window.state.current_thread_id = 3
+        window.state.suspended_script_id = 7
+        window._debug_state_changed("suspended")
+
+        assert not window.control_actions["break"].isEnabled()
+        assert window.control_actions["continue"].isEnabled()
+        assert window.control_actions["step-over"].isEnabled()
+        assert window.callstack.isEnabled()
+        assert window.break_thread_action.isEnabled()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_gui_table_expansion_requires_confirmation(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    requested = []
+    window.table_requested.connect(lambda *args: requested.append(args))
+    try:
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+        )
+        window.var_script.setValue(7)
+        window.table_name.setText("SmallTable")
+
+        window._dump_table()
+
+        assert requested == [(7, 1, "SmallTable", [], True)]
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_loaded_variable_is_visible_while_game_script_is_selected():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        window.state.current_script_id = 7
+
+        window._variable_loaded(7, VariableValue("planet", 4, "table: 1234"))
+
+        assert window.variables.topLevelItemCount() == 1
+        item = window.variables.topLevelItem(0)
+        assert (item.text(0), item.text(1), item.text(2)) == (
+            "planet",
+            "4",
+            "table: 1234",
+        )
+        assert window.statusBar().currentMessage() == "Loaded variable planet"
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_variable_result_from_previous_script_is_ignored():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        window.state.current_script_id = 8
+
+        window._variable_loaded(7, VariableValue("planet", 4, "table: 1234"))
+
+        assert window.variables.topLevelItemCount() == 0
+        assert "Ignored stale variable result" in window.statusBar().currentMessage()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_removing_selected_script_clears_visible_inspection_results():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        window.state.scripts[7] = ScriptInfo(7, "Foo.lua")
+        window.state.current_script_id = 7
+        window.state.set_variable(VariableValue("planet", 4, "table: 1234"))
+        window._render_variables()
+
+        window._message_received(
+            LuaMessage(LuaMessageId.SCRIPT_REMOVED, {"script_id": 7}, raw_payload=None)
+        )
+
+        assert window.state.current_script_id is None
+        assert window.variables.topLevelItemCount() == 0
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_legacy_script_variable_cache_is_not_mixed_with_frame_values():
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[],
+        )
+    )
+    try:
+        window.state.current_script_id = 7
+        window.state.set_script_variables(
+            7, [TableMember(3, "planet", 4, "old table")]
+        )
+
+        window._variable_loaded(7, VariableValue("planet", 4, "current table"))
+
+        assert window.variables.topLevelItemCount() == 1
+        assert window.variables.topLevelItem(0).text(2) == "current table"
     finally:
         window.close()
         app.processEvents()
@@ -316,7 +886,7 @@ def test_local_source_breakpoints_keep_local_script_id_and_render_gutter(tmp_pat
         editor = window._current_editor()
         assert editor is not None
         local_script_id = editor.source.script.script_id
-        assert local_script_id < 0
+        assert local_script_id <= -2
 
         window._toggle_source_breakpoint(local_script_id, 2)
 
@@ -324,6 +894,12 @@ def test_local_source_breakpoints_keep_local_script_id_and_render_gutter(tmp_pat
         assert window.state.breakpoints[0].script_id == local_script_id
         assert window.breakpoints.item(0, 0).text() == str(local_script_id)
         assert editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
+
+        window._toggle_global_breakpoint()
+
+        assert sent == []
+        assert len(window.state.breakpoints) == 1
+        assert "game-reported source" in window.statusBar().currentMessage()
     finally:
         window.close()
         app.processEvents()

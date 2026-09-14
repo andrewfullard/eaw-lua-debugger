@@ -18,6 +18,7 @@ def test_parse_execute_text_response():
 def test_client_execute_text_matches_script_response():
     sent = []
     client = LuaDebuggerClient()
+    client.known_script_ids.add(5)
     client.send_lua = lambda *args: sent.append(args)
     client.messages.extend(
         [
