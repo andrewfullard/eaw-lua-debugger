@@ -19,8 +19,8 @@ from .pgnet import (
 )
 
 ID_MODULUS = MAX_PACKET_ID + 1
-DIRECT_SEND_THRESHOLD = 0x495
-CHUNK_DATA_SIZE = DIRECT_SEND_THRESHOLD - 6
+DIRECT_SEND_THRESHOLD = 0x495  # Stock PGNet switches to sequenced chunks at this size.
+CHUNK_DATA_SIZE = DIRECT_SEND_THRESHOLD - 6  # Six bytes reserved by each chunk header.
 log = getLogger(__name__)
 
 
@@ -48,6 +48,7 @@ class ReceiveResult:
 
     @property
     def outbound(self) -> list[bytes]:
+        """Return acknowledgements, gap notices, and resends in send order."""
         return [*self.acks, *self.nacks, *self.resends]
 
 
@@ -63,12 +64,14 @@ class ReliableState:
         self._large_sequence: LargeSequence | None = None
 
     def make_guaranteed(self, payload: BitBuffer) -> bytes:
+        """Encode one reliable datagram, rejecting payloads that require chunking."""
         packets = self.make_guaranteed_packets(payload)
         if len(packets) != 1:
             raise ValueError("large payload produced multiple guaranteed packets")
         return packets[0]
 
     def make_guaranteed_packets(self, payload: BitBuffer) -> list[bytes]:
+        """Encode one reliable packet or a descriptor plus chunks for large payloads."""
         payload = payload.trim(payload.bit_count)
         if len(payload.data) < DIRECT_SEND_THRESHOLD:
             return [self._make_one(payload)]
@@ -80,7 +83,7 @@ class ReliableState:
         last_chunk_packet_id = (self.next_send_id + len(chunks)) % ID_MODULUS
         descriptor = BitWriter()
         descriptor.write_u32(SEQUENCER_MAGIC)
-        descriptor.write_u8(0)
+        descriptor.write_u8(0)  # sequencer subtype: descriptor
         descriptor.write_u32(last_chunk_packet_id)
         descriptor.write_u32(len(payload.data))
         descriptor.write_u32(payload.bit_count)
@@ -89,12 +92,13 @@ class ReliableState:
         for chunk in chunks:
             writer = BitWriter()
             writer.write_u32(SEQUENCER_MAGIC)
-            writer.write_u8(1)
+            writer.write_u8(1)  # sequencer subtype: data chunk
             writer.write_bytes(chunk)
             packets.append(self._make_one(writer.buffer()))
         return packets
 
     def _make_one(self, payload: BitBuffer) -> bytes:
+        """Assign the next sequence ID, encode the packet, and retain it for resend."""
         packet_id = self.next_send_id
         self.next_send_id = (self.next_send_id + 1) % ID_MODULUS
         datagram = encode_datagram(
@@ -104,6 +108,7 @@ class ReliableState:
         return datagram
 
     def due_resends(self, now: float | None = None) -> list[bytes]:
+        """Return retained packets past the resend deadline and update their timers."""
         now = time.monotonic() if now is None else now
         datagrams = []
         for pending in self.pending.values():
@@ -114,6 +119,7 @@ class ReliableState:
         return datagrams
 
     def process_packet(self, packet: PgNetPacket) -> ReceiveResult:
+        """Handle ACKs, NACKs, duplicates, gaps, and ordered reliable delivery."""
         result = ReceiveResult()
 
         if packet.kind == PacketKind.ACK:
@@ -147,19 +153,21 @@ class ReliableState:
         return result
 
     def _deliver_ordered(self, packet_id: int, payload: BitBuffer, result: ReceiveResult) -> None:
+        """Advance the receive window and emit the payload once reassembly completes."""
         self.expected_recv_id = (self.expected_recv_id + 1) % ID_MODULUS
         logical_payload = self._maybe_reassemble_large(packet_id, payload)
         if logical_payload is not None:
             result.deliveries.append(logical_payload)
 
     def _maybe_reassemble_large(self, packet_id: int, payload: BitBuffer) -> BitBuffer | None:
-        if payload.bit_count < 40:
+        """Consume a large-packet descriptor/chunk or return an ordinary payload unchanged."""
+        if payload.bit_count < 40:  # 32-bit magic plus 8-bit subtype
             return payload
 
         reader = payload.reader()
         magic = reader.read_u32()
         subtype = reader.read_u8()
-        if magic != SEQUENCER_MAGIC or subtype not in {0, 1}:
+        if magic != SEQUENCER_MAGIC or subtype not in {0, 1}:  # descriptor or chunk
             return payload
 
         if subtype == 0:
@@ -184,7 +192,7 @@ class ReliableState:
         if self._large_sequence is None:
             raise ProtocolError("received large-packet chunk before descriptor")
 
-        chunk_bits = reader.remaining_bits - 7
+        chunk_bits = reader.remaining_bits - 7  # remove trailing PGNet padding bits
         if chunk_bits < 0 or chunk_bits % 8:
             raise ProtocolError("large-packet chunk is not byte-aligned")
         chunk = reader.read_buffer(chunk_bits)

@@ -54,6 +54,7 @@ class LuaMessage:
 
     @property
     def name(self) -> str:
+        """Return the enum name, or an explicit marker for an unknown message ID."""
         try:
             return LuaMessageId(self.message_id).name
         except ValueError:
@@ -61,8 +62,8 @@ class LuaMessage:
 
 
 def _write_header(writer: BitWriter, message_id: int) -> None:
-    writer.write_bits(LUA_DEBUGGER_MAGIC, 4)
-    writer.write_u32(message_id)
+    writer.write_bits(LUA_DEBUGGER_MAGIC, 4)  # 4-bit Lua debugger packet magic
+    writer.write_u32(message_id)  # 32-bit message ID
 
 
 def encode_lua_message(message_id: int | LuaMessageId, *fields: int | str | list[int]) -> BitBuffer:
@@ -133,6 +134,7 @@ def dump_table(
     table_expression_or_name: str,
     table_path_components: list[int] | None = None,
 ) -> BitBuffer:
+    """Encode a table request, including its context/request ID and path components."""
     components = table_path_components or []
     return encode_lua_message(
         LuaMessageId.DUMP_TABLE,
@@ -149,6 +151,7 @@ def execute_text(script_id: int, text: str) -> BitBuffer:
 
 
 def parse_lua_message(payload: BitBuffer) -> LuaMessage:
+    """Validate the Lua packet header and parse fields known for its message ID."""
     reader = _reader_after_magic(payload)
     message_id = reader.read_u32()
     fields = _parse_fields(message_id, reader)
@@ -156,14 +159,16 @@ def parse_lua_message(payload: BitBuffer) -> LuaMessage:
 
 
 def _reader_after_magic(payload: BitBuffer) -> BitReader:
+    """Return a reader positioned after the magic, tolerating a 57-bit prefix."""
     reader = payload.reader()
     magic = reader.read_bits(4)
     if magic == LUA_DEBUGGER_MAGIC:
         return reader
 
+    # Some captures contain a 57-bit zero prefix before the 4-bit magic.
     if payload.bit_count >= 61:
         prefix = payload.reader()
-        if prefix.read_bits(57) == 0:
+        if prefix.read_bits(57) == 0:  # 57-bit legacy framing prefix
             shifted = BitReader(payload.data, payload.bit_count - 57, bit_offset=57)
             if shifted.read_bits(4) == LUA_DEBUGGER_MAGIC:
                 return shifted
@@ -172,6 +177,7 @@ def _reader_after_magic(payload: BitBuffer) -> BitReader:
 
 
 def _parse_thread_pairs(reader: BitReader) -> list[dict[str, Any]]:
+    """Parse complete thread index/name pairs until fewer than 40 bits remain."""
     threads: list[dict[str, Any]] = []
     while reader.remaining_bits >= 40:
         thread_index = reader.read_u32()
@@ -181,6 +187,7 @@ def _parse_thread_pairs(reader: BitReader) -> list[dict[str, Any]]:
 
 
 def _parse_script_list(reader: BitReader) -> dict[str, Any]:
+    """Parse a counted script list and preserve its declared count."""
     count = reader.read_u32()
     scripts = []
     for _ in range(count):
@@ -189,6 +196,7 @@ def _parse_script_list(reader: BitReader) -> dict[str, Any]:
 
 
 def _parse_fields(message_id: int, reader: BitReader) -> dict[str, Any]:
+    """Decode the variable field layout associated with each known message ID."""
     if message_id in {LuaMessageId.HELLO, LuaMessageId.GOODBYE, LuaMessageId.HEARTBEAT}:
         return {}
 
