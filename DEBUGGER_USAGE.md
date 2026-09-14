@@ -129,20 +129,10 @@ starts at the current cursor position.
 Repeat the most recent source search forward or backward. Their shortcuts are
 **F3** and **Shift+F3**.
 
-### Replace
-
-Replacement is not implemented yet. The command currently shows an explanatory
-status-bar message and does not modify the source.
-
 ### Go to line
 
 Prompts for a line number, moves the current source cursor there, and centers
 the line in the editor.
-
-### Parse
-
-Standalone parsing is not implemented yet. The command currently reports the
-current filename in the status bar without validating or running the file.
 
 ## Debug menu
 

@@ -220,10 +220,7 @@ class MainWindow(QMainWindow):
         self._menu_action(edit_menu, "Find", self._focus_find, "Ctrl+F")
         self._menu_action(edit_menu, "Find Next", self._find_next, "F3")
         self._menu_action(edit_menu, "Find Prev", self._find_prev, "Shift+F3")
-        self._menu_action(edit_menu, "Replace", self._replace_text, "Ctrl+R")
         self._menu_action(edit_menu, "Go to line", self._go_to_line, "Ctrl+G")
-        edit_menu.addSeparator()
-        self._menu_action(edit_menu, "Parse", self._parse_current_source, "F7")
         self._menu_action(
             breakpoints_menu,
             "Toggle Breakpoint",
@@ -999,9 +996,6 @@ class MainWindow(QMainWindow):
         if editor is not None and self.find_text:
             editor.find(self.find_text, QPlainTextEdit.FindFlag.FindBackward)
 
-    def _replace_text(self) -> None:
-        self.statusBar().showMessage("Replace is available in editable source tabs")
-
     def _go_to_line(self) -> None:
         editor = self._current_editor()
         if editor is None:
@@ -1011,11 +1005,6 @@ class MainWindow(QMainWindow):
             cursor = QTextCursor(editor.document().findBlockByNumber(line - 1))
             editor.setTextCursor(cursor)
             editor.centerCursor()
-
-    def _parse_current_source(self) -> None:
-        editor = self._current_editor()
-        if editor is not None:
-            self.statusBar().showMessage(f"Parsed {editor.source.script.full_path_name}")
 
     def _toggle_current_line_breakpoint(self) -> None:
         editor = self._current_editor()

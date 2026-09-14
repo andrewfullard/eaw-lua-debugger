@@ -151,8 +151,7 @@ uv run pytest
 ```
 
 Live testing does need a compatible internal/debug `StarWarsI.exe`, with the Lua
-debug server started using `luadebug`. StarWarsI embeds Lua 5.0.2; do not copy or
-inject LuaDebuggerNET's private Lua 5.1 runtime into the game.
+debug server started using `luadebug`. StarWarsI embeds Lua 5.0.2.
 
 ```powershell
 uv run eaw-lua-debugger scripts --host 127.0.0.1 --port 1234
