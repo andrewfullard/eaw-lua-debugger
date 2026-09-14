@@ -18,6 +18,9 @@ It implements:
 
 The GUI is the primary way to use the debugger:
 
+See [DEBUGGER_USAGE.md](DEBUGGER_USAGE.md) for a user-facing reference to every
+GUI control and command-line function.
+
 ```powershell
 uv run eaw-lua-debugger-gui
 ```
@@ -38,7 +41,7 @@ state through tabs matching the native tool shape:
 - source-line breakpoint display and Breakpoints tab management
 - `File > Smart open...` to list Lua files found under source roots
 - File/Edit/Breakpoints menus with the native debugger-style shortcuts
-- Debug Output, Variables, Lua Console, Breakpoints, Parse Errors, and Find In Files
+- Debug Output, Variables, Lua Console, and a read-only Breakpoints table
 
 Connection options are available as command-line arguments:
 
