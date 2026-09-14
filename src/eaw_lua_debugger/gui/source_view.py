@@ -81,10 +81,20 @@ class SourceEditor(QPlainTextEdit):
 
     def render(self) -> None:
         cursor = self.textCursor()
-        line = cursor.blockNumber()
+        position = cursor.position()
+        anchor = cursor.anchor()
+        vertical_scroll = self.verticalScrollBar().value()
+        horizontal_scroll = self.horizontalScrollBar().value()
         self.setPlainText(format_source_lines(self.source_text(), self.breakpoint_lines))
-        cursor = QTextCursor(self.document().findBlockByNumber(max(0, line)))
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(min(anchor, self.document().characterCount() - 1))
+        cursor.setPosition(
+            min(position, self.document().characterCount() - 1),
+            QTextCursor.MoveMode.KeepAnchor,
+        )
         self.setTextCursor(cursor)
+        self.verticalScrollBar().setValue(vertical_scroll)
+        self.horizontalScrollBar().setValue(horizontal_scroll)
 
     def set_breakpoints(self, lines: set[int]) -> None:
         self.breakpoint_lines = lines
@@ -100,9 +110,9 @@ class SourceEditor(QPlainTextEdit):
         return "\n".join(strip_source_prefix(line) for line in text.splitlines()) + "\n"
 
     def mouseDoubleClickEvent(self, event) -> None:
+        super().mouseDoubleClickEvent(event)
         cursor = self.cursorForPosition(event.position().toPoint())
         self.breakpoint_toggled.emit(cursor.blockNumber() + 1)
-        super().mouseDoubleClickEvent(event)
 
 
 class SmartOpenDialog(QDialog):

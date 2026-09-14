@@ -26,6 +26,7 @@ class DebuggerWorker(QObject):
     execute_finished = Signal(str)
     debug_state_changed = Signal(str)
     feedback = Signal(str)
+    callstack_frame_selected = Signal(int, int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -149,6 +150,7 @@ class DebuggerWorker(QObject):
             self.client.set_callstack_depth(script_id, depth)
             self.client.flush()
             self.debug_state_changed.emit(self.client.run_state.value)
+            self.callstack_frame_selected.emit(script_id, depth)
             self.feedback.emit(f"Selected call-stack frame {depth}")
         except Exception as exc:  # noqa: BLE001
             self._report_error(exc)

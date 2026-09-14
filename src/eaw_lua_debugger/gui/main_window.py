@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self.is_connected = False
         self.run_state: DebuggerRunState | None = None
         self._breakpoints_to_replay: set[tuple[bool, int, str, int, str]] = set()
+        self._callstack_depths: dict[int, int] = {}
         self.setWindowTitle("LuaDebuggerNET")
         self.resize(1074, 847)
         self._build_worker()
@@ -129,6 +130,7 @@ class MainWindow(QMainWindow):
         self.worker.execute_finished.connect(self._execute_finished)
         self.worker.debug_state_changed.connect(self._debug_state_changed)
         self.worker.feedback.connect(self._feedback)
+        self.worker.callstack_frame_selected.connect(self._callstack_frame_selected)
         self.thread.start()
 
     def _build_actions(self) -> None:
@@ -384,6 +386,7 @@ class MainWindow(QMainWindow):
         self.is_connected = False
         self.run_state = None
         self._pending_variable_requests.clear()
+        self._callstack_depths.clear()
         self.files.clear()
         self.threads.clear()
         self.callstack.clear()
@@ -478,8 +481,11 @@ class MainWindow(QMainWindow):
         )
         if script_was_suspended or selected_script_was_removed:
             self._clear_inspection_results()
+        if script_was_suspended:
+            self._callstack_depths[message.fields["script_id"]] = 0
         if message_id == LuaMessageId.SCRIPT_REMOVED:
             removed_id = message.fields["script_id"]
+            self._callstack_depths.pop(removed_id, None)
             self._breakpoints_to_replay.update(
                 _breakpoint_key(breakpoint)
                 for breakpoint in self.state.breakpoints
@@ -632,6 +638,13 @@ class MainWindow(QMainWindow):
         self.callstack_requested.emit(script_id, int(item.text(0)))
         self.callstack.setEnabled(False)
         self.statusBar().showMessage(f"Selecting call-stack frame {item.text(0)}...")
+
+    def _callstack_frame_selected(self, script_id: int, depth: int) -> None:
+        self._callstack_depths[script_id] = depth
+        if script_id == self.state.current_script_id:
+            item = self.callstack.topLevelItem(depth)
+            if item is not None:
+                self.callstack.setCurrentItem(item)
 
     def _dump_variable(self) -> None:
         name = self.var_name.text()
@@ -981,6 +994,9 @@ class MainWindow(QMainWindow):
         self.callstack.clear()
         for depth, frame in enumerate(self.state.callstacks.get(script_id, [])):
             self.callstack.addTopLevelItem(QTreeWidgetItem([str(depth), frame]))
+        selected = self.callstack.topLevelItem(self._callstack_depths.get(script_id, 0))
+        if selected is not None:
+            self.callstack.setCurrentItem(selected)
         self.callstack.resizeColumnToContents(0)
 
     def _render_variables(self) -> None:

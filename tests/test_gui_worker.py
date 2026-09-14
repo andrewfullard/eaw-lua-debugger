@@ -4,6 +4,7 @@ pytest.importorskip("PySide6")
 
 import argparse
 
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from eaw_lua_debugger.core.exceptions import ConnectionLost
@@ -196,10 +197,13 @@ def test_gui_worker_selects_callstack_frame_only_through_client_guard():
     worker = DebuggerWorker()
     client = FakeClient()
     worker.client = client
+    selected = []
+    worker.callstack_frame_selected.connect(lambda *args: selected.append(args))
 
     worker.select_callstack_frame(7, 2)
 
     assert client.calls == [("set_callstack_depth", 7, 2), ("flush",)]
+    assert selected == [(7, 2)]
 
 
 def test_gui_worker_remove_breakpoint_includes_native_condition_field():
@@ -355,6 +359,49 @@ def test_gui_breakpoints_render_in_table_and_source_gutter_not_output(tmp_path):
         assert window.breakpoints.rowCount() == 1
         assert window.output.toPlainText() == ""
         assert editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_breakpoint_render_preserves_editor_position_and_view(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = tmp_path / "Foo.lua"
+    source.write_text(
+        "\n".join(f"line_{line} = '{'.' * 200}'" for line in range(300)),
+        encoding="utf-8",
+    )
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    try:
+        script = ScriptInfo(7, str(source))
+        window.state.scripts[7] = script
+        window._open_source(script)
+        window.show()
+        app.processEvents()
+        editor = window.source_editors[7]
+        cursor = QTextCursor(editor.document().findBlockByNumber(200))
+        cursor.movePosition(QTextCursor.MoveOperation.Right, n=25)
+        editor.setTextCursor(cursor)
+        editor.verticalScrollBar().setValue(0)
+        editor.horizontalScrollBar().setValue(editor.horizontalScrollBar().maximum())
+        position = editor.textCursor().position()
+        vertical_scroll = editor.verticalScrollBar().value()
+        horizontal_scroll = editor.horizontalScrollBar().value()
+
+        editor.set_breakpoints({201})
+
+        assert editor.textCursor().position() == position
+        assert editor.verticalScrollBar().value() == vertical_scroll
+        assert editor.horizontalScrollBar().value() == horizontal_scroll
     finally:
         window.close()
         app.processEvents()
@@ -830,6 +877,12 @@ def test_callstack_tab_shows_selected_script_callstack():
             "1",
             "Bar.lua:20",
         ]
+        assert window.callstack.currentItem() is first_frame
+
+        window._callstack_frame_selected(7, 1)
+        window._render_callstack(7)
+
+        assert window.callstack.currentItem().text(0) == "1"
 
         window.state.scripts[8] = ScriptInfo(8, "Data/Scripts/Other.lua")
         window._select_game_script(8, open_source=False, request_threads=False)
