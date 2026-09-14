@@ -606,6 +606,37 @@ def test_breakpoint_replay_does_not_guess_between_duplicate_lua_states(tmp_path)
         app.processEvents()
 
 
+def test_local_breakpoint_replay_waits_for_selected_duplicate_game_script(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    source = str(tmp_path / "Foo.lua")
+    window = MainWindow(
+        argparse.Namespace(
+            host="127.0.0.1",
+            port=1234,
+            local_port=0,
+            client_name=None,
+            timeout=5.0,
+            source_root=[str(tmp_path)],
+        )
+    )
+    replayed = []
+    window.add_breakpoint_requested.connect(replayed.append)
+    try:
+        window._open_local_path(source)
+        local_script_id = window._current_editor().source.script.script_id
+        window._toggle_source_breakpoint(local_script_id, 1)
+        window._scripts_loaded([ScriptInfo(41, source), ScriptInfo(42, source)])
+
+        assert replayed == []
+
+        window._select_game_script(42, open_source=False, request_threads=False)
+
+        assert replayed == [BreakpointSpec(42, -1, source, 1)]
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_gui_actions_follow_stock_running_and_suspended_states():
     app = QApplication.instance() or QApplication([])
     window = MainWindow(
@@ -1175,7 +1206,7 @@ def test_local_source_open_does_not_request_game_variables(tmp_path):
         app.processEvents()
 
 
-def test_local_source_breakpoints_keep_local_script_id_and_render_gutter(tmp_path):
+def test_local_source_breakpoints_replay_when_matching_game_script_loads(tmp_path):
     app = QApplication.instance() or QApplication([])
     source = tmp_path / "Local.lua"
     source.write_text("a\nb\n", encoding="utf-8")
@@ -1205,9 +1236,15 @@ def test_local_source_breakpoints_keep_local_script_id_and_render_gutter(tmp_pat
         assert window.breakpoints.item(0, 0).text() == str(local_script_id)
         assert editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
 
+        window._scripts_loaded([ScriptInfo(7, str(source))])
+
+        assert sent == [BreakpointSpec(7, -1, str(source), 2)]
+        assert window.state.breakpoints[0].script_id == 7
+        assert editor.toPlainText().splitlines()[1].startswith("  2 \u25cf")
+
         window._toggle_global_breakpoint()
 
-        assert sent == []
+        assert len(sent) == 1
         assert len(window.state.breakpoints) == 1
         assert "game-reported source" in window.statusBar().currentMessage()
     finally:

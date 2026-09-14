@@ -431,7 +431,7 @@ class MainWindow(QMainWindow):
         remapped = []
         for breakpoint in self.state.breakpoints:
             matches = scripts_by_source.get(_source_key(breakpoint.source_name), [])
-            if breakpoint.script_id >= 0 and len(matches) == 1:
+            if breakpoint.script_id != -1 and len(matches) == 1:
                 breakpoint = replace(
                     breakpoint,
                     script_id=matches[0].script_id,
@@ -650,7 +650,7 @@ class MainWindow(QMainWindow):
         remapped = []
         for breakpoint in self.state.breakpoints:
             if (
-                breakpoint.script_id >= 0
+                breakpoint.script_id != -1
                 and _breakpoint_key(breakpoint) in self._breakpoints_to_replay
                 and _source_key(breakpoint.source_name) == selected_source
             ):
@@ -779,7 +779,7 @@ class MainWindow(QMainWindow):
         self.state.add_breakpoint(spec)
         if self._can_send_breakpoint(spec):
             self.add_breakpoint_requested.emit(spec)
-        elif spec.script_id >= -1:
+        else:
             self._breakpoints_to_replay.add(_breakpoint_key(spec))
         self._render_breakpoints()
         self._render_source_breakpoints(spec.script_id)
@@ -1153,7 +1153,10 @@ class MainWindow(QMainWindow):
                     breakpoint.line_number
                     for breakpoint in self.state.breakpoints
                     if _same_source(breakpoint.source_name, source_name)
-                    and breakpoint.script_id in {script_id, -1}
+                    and (
+                        breakpoint.script_id in {script_id, -1}
+                        or script_id <= -2
+                    )
                 }
             )
 

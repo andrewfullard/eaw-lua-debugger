@@ -75,8 +75,9 @@ script match.
 
 ### Open
 
-Opens a local `.lua` file by path. A local-only file can be read and edited,
-but it has no live game script ID and cannot create a game-wide breakpoint.
+Opens a local `.lua` file by path. Breakpoints added to a local-only file are
+remembered and sent automatically after connecting when exactly one live game
+script has the same source name. They remain pending if no unique match exists.
 
 ### Smart open
 
@@ -196,6 +197,8 @@ using the same source. Line numbers and breakpoint dots are display decoration
 and are removed when the file is saved.
 
 - Double-click a line to toggle a script-specific breakpoint.
+- A breakpoint on a local-only file is pending until its matching game script is
+  available.
 - A breakpoint is shown with a dot beside its line number.
 - The active call-stack line has a yellow highlight.
 - Changing the active call-stack frame opens the matching local source, when it
