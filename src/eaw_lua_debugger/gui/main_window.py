@@ -27,6 +27,7 @@ try:
         QHBoxLayout,
         QInputDialog,
         QLineEdit,
+        QListWidget,
         QMainWindow,
         QMessageBox,
         QPlainTextEdit,
@@ -177,6 +178,7 @@ class MainWindow(QMainWindow):
         breakpoints_menu = self.menuBar().addMenu("&Breakpoints")
         settings_menu = self.menuBar().addMenu("&Settings")
         self._menu_action(settings_menu, "Add Source Root...", self._add_source_root)
+        self._menu_action(settings_menu, "List Source Roots", self._list_source_roots)
         help_menu = self.menuBar().addMenu("&Help")
         self._menu_action(help_menu, "Debugger Usage", self._open_help)
         toolbar = QToolBar()
@@ -928,6 +930,29 @@ class MainWindow(QMainWindow):
         if path:
             self.source_roots = source_roots([*(str(root) for root in self.source_roots), path])
             self.statusBar().showMessage(f"Added source root: {path}")
+
+    def _list_source_roots(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Source Roots")
+        layout = QVBoxLayout(dialog)
+        roots = QListWidget()
+        roots.addItems([str(root) for root in self.source_roots])
+        layout.addWidget(roots)
+        buttons = QHBoxLayout()
+        delete = QPushButton("Delete Selected")
+        delete.clicked.connect(lambda: self._delete_source_root(roots))
+        close = QPushButton("Close")
+        close.clicked.connect(dialog.accept)
+        buttons.addWidget(delete)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        dialog.exec()
+
+    def _delete_source_root(self, roots: QListWidget) -> None:
+        row = roots.currentRow()
+        if row >= 0:
+            self.source_roots.pop(row)
+            roots.takeItem(row)
 
     def _smart_open(self) -> None:
         dialog = SmartOpenDialog(find_lua_files(self.source_roots), self)
