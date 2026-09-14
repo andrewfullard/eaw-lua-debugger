@@ -1,7 +1,7 @@
 # eaw-lua-debugger
 
 `eaw-lua-debugger` is a Python package for the Star Wars: Empire at War internal
-Lua debugger protocol described in `starwars_lua_debug_server_protocol.md`.
+Lua debugger protocol.
 
 It implements:
 
