@@ -175,7 +175,8 @@ class MainWindow(QMainWindow):
         edit_menu = self.menuBar().addMenu("&Edit")
         debug_menu = self.menuBar().addMenu("&Debug")
         breakpoints_menu = self.menuBar().addMenu("&Breakpoints")
-        self.menuBar().addMenu("&Settings")
+        settings_menu = self.menuBar().addMenu("&Settings")
+        self._menu_action(settings_menu, "Add Source Root...", self._add_source_root)
         help_menu = self.menuBar().addMenu("&Help")
         self._menu_action(help_menu, "Debugger Usage", self._open_help)
         toolbar = QToolBar()
@@ -917,6 +918,16 @@ class MainWindow(QMainWindow):
     def _open_help(self) -> None:
         path = Path(__file__).resolve().parents[3] / "DEBUGGER_USAGE.md"
         self._open_local_path(str(path))
+
+    def _add_source_root(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Source Root",
+            str(self.source_roots[-1]) if self.source_roots else "",
+        )
+        if path:
+            self.source_roots = source_roots([*(str(root) for root in self.source_roots), path])
+            self.statusBar().showMessage(f"Added source root: {path}")
 
     def _smart_open(self) -> None:
         dialog = SmartOpenDialog(find_lua_files(self.source_roots), self)

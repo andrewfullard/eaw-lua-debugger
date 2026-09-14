@@ -333,6 +333,10 @@ game.
 
 ## Settings and Help menus
 
+The **Settings > Add Source Root...** command adds a game or mod directory to
+the source search paths. Repeat it to add multiple directories; the new roots
+are used by **File > Smart open...** and when opening reported source files.
+
 The **Help** menu contains **Debugger Usage**, which opens this guide in a
 source tab.
 
