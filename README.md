@@ -54,10 +54,6 @@ game-reported paths directly and by common suffixes such as `Data/Scripts/...`.
 You can also set `EAW_LUA_SOURCE_ROOT` to one or more roots separated by the
 platform path separator.
 
-`Breakpoints > Delete All Breakpoints` removes the breakpoints currently known
-to the GUI by sending individual remove-breakpoint requests. It is intentionally
-not mapped to any undocumented debug-control value.
-
 ## Debug a Lua script: quick guide
 
 1. Start an internal/debug build of the game. Open its console, enter

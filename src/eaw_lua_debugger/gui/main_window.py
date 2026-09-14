@@ -348,7 +348,6 @@ class MainWindow(QMainWindow):
         self.table_name = QLineEdit("_G")
         self.table_path = QLineEdit()
         form = QFormLayout()
-        form.addRow("Script", self.var_script)
         form.addRow("Variable", self.var_name)
         form.addRow("Table", self.table_name)
         form.addRow("Table path indexes", self.table_path)

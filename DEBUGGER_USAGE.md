@@ -253,29 +253,24 @@ Each returned value has a name, the game's numeric Lua type, and a display
 string. Table and userdata values are display summaries rather than complete
 serialized objects.
 
-### Script
-
-The live script ID used for inspection. Selecting a file normally fills this
-in. Leave it on the currently suspended script when inspecting stack values.
-
 ### Variable and Read Variable
 
 Enter one variable name, such as `planet`, and choose **Read Variable**. While
 suspended, the result belongs to the currently selected call-stack frame. If
 you change frames, read the variable again.
 
-Reading `_G` returns a table summary; it does not safely enumerate every global.
+Reading `_G` returns a table summary; it does not enumerate every global.
 
 ### Table, Table path indexes, and Expand Table (unsafe)
 
 These controls ask the game to enumerate a table and optionally descend using
 numeric path components separated by spaces. This feature is unsafe in the
-analyzed game build: any displayed key or value of 255 bytes or more can cause
-a native assertion or close the game.
+game: any displayed key or value of 255 bytes or more can cause
+an assertion or close the game.
 
-Never expand `_G`. Use **Read Variable** for individual names whenever possible.
-Proceed past the warning only when losing the current game session is
-acceptable.
+Never expand `_G`, it is always more than 255 bytes. Use **Read Variable** for 
+individual names whenever possible. Proceed past the warning only when losing 
+the current game session is acceptable.
 
 ## Lua Console tab
 
