@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import re
 from dataclasses import replace
+from pathlib import Path
 
 from ..debugger.client import CONTROL_MESSAGES, DebuggerRunState
 from ..debugger.types import ScriptInfo, VariableValue
@@ -175,7 +176,8 @@ class MainWindow(QMainWindow):
         debug_menu = self.menuBar().addMenu("&Debug")
         breakpoints_menu = self.menuBar().addMenu("&Breakpoints")
         self.menuBar().addMenu("&Settings")
-        self.menuBar().addMenu("&Help")
+        help_menu = self.menuBar().addMenu("&Help")
+        self._menu_action(help_menu, "Debugger Usage", self._open_help)
         toolbar = QToolBar()
         self.addToolBar(toolbar)
         self.connect_action = self._menu_action(
@@ -911,6 +913,10 @@ class MainWindow(QMainWindow):
         )
         if path:
             self._open_local_path(path)
+
+    def _open_help(self) -> None:
+        path = Path(__file__).resolve().parents[3] / "DEBUGGER_USAGE.md"
+        self._open_local_path(str(path))
 
     def _smart_open(self) -> None:
         dialog = SmartOpenDialog(find_lua_files(self.source_roots), self)

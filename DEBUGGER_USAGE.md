@@ -333,7 +333,8 @@ game.
 
 ## Settings and Help menus
 
-These menu headings currently contain no commands.
+The **Help** menu contains **Debugger Usage**, which opens this guide in a
+source tab.
 
 ## Command-line functions
 
