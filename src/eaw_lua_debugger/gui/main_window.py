@@ -113,7 +113,12 @@ class MainWindow(QMainWindow):
         self.state = DebuggerState()
         breakpoint_file = getattr(args, "breakpoint_file", None)
         self.breakpoint_file = Path(breakpoint_file) if breakpoint_file else None
-        self.source_roots = source_roots(getattr(args, "source_root", []))
+        source_root_file = getattr(args, "source_root_file", None)
+        self.source_root_file = Path(source_root_file) if source_root_file else None
+        self._saved_source_roots = self._load_source_roots()
+        self.source_roots = source_roots(
+            [*self._saved_source_roots, *getattr(args, "source_root", [])]
+        )
         self._smart_open_cache: tuple[tuple[Path, ...], list[Path]] | None = None
         self.source_editors: dict[int, SourceEditor] = {}
         self.frame_source_editors: dict[tuple[int, str], SourceEditor] = {}
@@ -941,7 +946,14 @@ class MainWindow(QMainWindow):
             str(self.source_roots[-1]) if self.source_roots else "",
         )
         if path:
-            self.source_roots = source_roots([*(str(root) for root in self.source_roots), path])
+            new_root = Path(path)
+            self.source_roots = source_roots(
+                [*(str(root) for root in self.source_roots), path]
+            )
+            if all(root.resolve(strict=False) != new_root.resolve(strict=False)
+                   for root in self._saved_source_roots):
+                self._saved_source_roots.append(new_root)
+            self._save_source_roots()
             self._smart_open_cache = None
             self.statusBar().showMessage(f"Added source root: {path}")
 
@@ -965,7 +977,13 @@ class MainWindow(QMainWindow):
     def _delete_source_root(self, roots: QListWidget) -> None:
         row = roots.currentRow()
         if row >= 0:
-            self.source_roots.pop(row)
+            removed = self.source_roots.pop(row)
+            removed_key = removed.resolve(strict=False)
+            self._saved_source_roots = [
+                root for root in self._saved_source_roots
+                if root.resolve(strict=False) != removed_key
+            ]
+            self._save_source_roots()
             self._smart_open_cache = None
             roots.takeItem(row)
 
@@ -1266,6 +1284,32 @@ class MainWindow(QMainWindow):
             self.state.add_breakpoint(spec)
             self._breakpoints_to_replay.add(_breakpoint_key(spec))
         self._render_breakpoints()
+
+    def _load_source_roots(self) -> list[Path]:
+        if self.source_root_file is None or not self.source_root_file.is_file():
+            return []
+        try:
+            records = json.loads(self.source_root_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(records, list):
+            return []
+        return [Path(root) for root in records if isinstance(root, str) and root]
+
+    def _save_source_roots(self) -> None:
+        if self.source_root_file is None:
+            return
+        try:
+            self.source_root_file.parent.mkdir(parents=True, exist_ok=True)
+            self.source_root_file.write_text(
+                json.dumps(
+                    [str(root) for root in self._saved_source_roots], indent=2
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            return
 
     def _save_breakpoints(self) -> None:
         if self.breakpoint_file is None:

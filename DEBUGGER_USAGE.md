@@ -79,10 +79,6 @@ Opens a local `.lua` file by path. Breakpoints added to a local-only file are
 remembered and sent automatically after connecting when exactly one live game
 script has the same source name. They remain pending if no unique match exists.
 
-The GUI saves the current breakpoint list to
-`~/.eaw_lua_debugger_breakpoints.json` and loads it when the next session
-starts. Use `--breakpoint-file` to choose another file.
-
 ### Smart open
 
 Lists the `.lua` files beneath the configured source roots. Type part of a name
@@ -321,6 +317,10 @@ This read-only table lists every breakpoint currently known to the GUI:
 
 Use the source editor or **Breakpoints** menu to change the list.
 
+The GUI saves the current breakpoint list to
+`~/.eaw_lua_debugger_breakpoints.json` and loads it when the next session
+starts. Use `--breakpoint-file` to choose another file.
+
 ## Status bar and error dialogs
 
 The bottom status bar is the authoritative summary of the current operation.
@@ -342,6 +342,11 @@ the source search paths. Repeat it to add multiple directories; the new roots
 are used by **File > Smart open...** and when opening reported source files.
 Use **Settings > List Source Roots** to view the current search paths and delete
 the selected directory from the session.
+
+Source roots added through **Settings > Add Source Root** are saved separately
+to `~/.eaw_lua_debugger_source_roots.json` and loaded on startup. Use
+`--source-root-file` to choose another file. Command-line and environment roots
+remain session-specific.
 
 The **Help** menu contains **Debugger Usage**, which opens this guide in a
 source tab.

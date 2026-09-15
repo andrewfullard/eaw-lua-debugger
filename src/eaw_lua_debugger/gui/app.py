@@ -28,6 +28,11 @@ def main(argv: list[str] | None = None) -> int:
         help="file used to persist GUI breakpoints",
     )
     parser.add_argument(
+        "--source-root-file",
+        default=str(Path.home() / ".eaw_lua_debugger_source_roots.json"),
+        help="file used to persist GUI source roots",
+    )
+    parser.add_argument(
         "--source-root",
         action="append",
         default=[],
